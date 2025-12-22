@@ -1,0 +1,31 @@
+[client]
+showErrorDetails = false
+toolbarMode = "minimal"
+
+[logger]
+level = "error"
+
+[server]
+headless = true
+port = 8501
+runOnSave = true
+maxMessageSize = 200
+enableCORS = true
+enableXsrfProtection = true
+
+[theme]
+primaryColor = "#1976d2"
+backgroundColor = "#f8f9fa"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#262730"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+# Otimizações para mobile
+[client]
+toolbarMode = "minimal"
+
+[logger]
+level = "warning"
