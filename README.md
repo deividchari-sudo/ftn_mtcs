@@ -1,127 +1,161 @@
-# Fitness Metrics - Webapp Streamlit
+# 💪 Fitness Metrics Dashboard
 
-Um aplicativo web de rastreamento de métricas de fitness que se integra com Garmin Connect. Funciona perfeitamente em Android (via Termux ou navegador web).
+Um dashboard interativo para monitoramento de métricas de fitness com integração ao Garmin Connect. Acompanhe seu progresso através das métricas CTL (Chronic Training Load), ATL (Acute Training Load) e TSB (Training Stress Balance).
 
-## 🎯 Características
+## 📋 Visão Geral
 
-- **📊 Dashboard Interativo**: Visualize suas métricas de fitness (CTL, ATL, TSB) em tempo real
-- **⚙️ Configuração Segura**: Armazene credenciais do Garmin Connect localmente no seu dispositivo
-- **🔄 Sincronização com Garmin Connect**: Busque atividades dos últimos 42 dias e atualize métricas
-- **📱 Responsivo**: Funciona perfeitamente em desktop, tablet e Android
-- **🔐 Seguro**: Credenciais armazenadas apenas no dispositivo, nunca em servidores
+Este aplicativo Streamlit permite que atletas monitorem seu estado de forma física através de métricas científicas baseadas em dados de atividades físicas. A integração com Garmin Connect permite sincronização automática de dados de treino.
 
-## 📋 Requisitos
+### ✨ Funcionalidades Principais
 
-- Python 3.8+
-- pip (gerenciador de pacotes Python)
+- **📊 Dashboard Interativo**: Visualize seu estado atual de forma física com métricas CTL, ATL e TSB
+- **🔄 Sincronização Garmin**: Importe automaticamente atividades dos últimos 42 dias
+- **📅 Calendário de Treinos**: Veja seu histórico de atividades em formato de calendário
+- **🎯 Metas Personalizáveis**: Configure e acompanhe metas semanais e mensais
+- **⚙️ Configuração Segura**: Armazenamento local de credenciais (nunca enviado para servidores)
+- **📱 Design Responsivo**: Funciona em desktop, tablet e dispositivos móveis
 
-## 🚀 Instalação
+## 🚀 Instalação e Execução
 
-### 1. Instale as dependências
+### Pré-requisitos
 
-```bash
-pip install -r requirements.txt
+- Python 3.8 ou superior
+- Conta Garmin Connect
+
+### Instalação
+
+1. **Clone ou baixe o projeto**
+   ```bash
+   git clone <repository-url>
+   cd fitness-metrics
+   ```
+
+2. **Instale as dependências**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Execute o aplicativo**
+   ```bash
+   streamlit run app.py
+   ```
+
+4. **Acesse no navegador**
+   - Local: http://localhost:8501
+   - Rede: http://[seu-ip]:8501
+
+## 📊 Métricas de Fitness
+
+### CTL (Chronic Training Load)
+- **O que é**: Capacidade de forma física crônica
+- **Cálculo**: Média ponderada dos últimos 42 dias
+- **Interpretação**: Valores mais altos indicam melhor condição física
+
+### ATL (Acute Training Load)
+- **O que é**: Carga de treino aguda (fadiga)
+- **Cálculo**: Média ponderada dos últimos 7 dias
+- **Interpretação**: Valores altos indicam fadiga acumulada
+
+### TSB (Training Stress Balance)
+- **O que é**: Equilíbrio entre forma física e fadiga
+- **Cálculo**: CTL - ATL
+- **Interpretação**:
+  - **Positivo**: Pronto para treinos intensos
+  - **Negativo**: Período de recuperação
+  - **Zero**: Equilíbrio ideal
+
+## 🔧 Configuração
+
+### Credenciais Garmin Connect
+
+1. Acesse a página "⚙️ Configuração"
+2. Insira seu email e senha do Garmin Connect
+3. As credenciais são armazenadas **apenas localmente** no seu dispositivo
+
+### Parâmetros de Fitness
+
+Configure os seguintes parâmetros na página de configuração:
+
+- **Idade**: Para cálculos de zonas cardíacas
+- **FTP**: Functional Threshold Power (ciclismo)
+- **Pace Threshold**: Ritmo limite (corrida)
+- **Swim Pace Threshold**: Ritmo limite (natação)
+- **HR Rest**: Frequência cardíaca em repouso
+- **HR Max**: Frequência cardíaca máxima
+
+## 📱 Como Usar
+
+### Primeiro Uso
+
+1. **Configure credenciais**: Vá para "⚙️ Configuração" e adicione suas credenciais Garmin
+2. **Configure parâmetros**: Ajuste seus parâmetros de fitness
+3. **Sincronize dados**: Clique em "🔄 Atualizar Dados Agora"
+4. **Visualize dashboard**: Veja suas métricas na página "📊 Dashboard"
+
+### Navegação
+
+- **📊 Dashboard**: Visão geral das métricas atuais
+- **📅 Calendário**: Histórico visual de atividades
+- **🎯 Metas**: Configuração e acompanhamento de objetivos
+- **⚙️ Configuração**: Gerenciamento de credenciais e parâmetros
+
+## 🔒 Segurança e Privacidade
+
+- **Armazenamento Local**: Todas as credenciais e dados são armazenados apenas no seu dispositivo
+- **Sem Servidores Externos**: Não há transmissão de dados para servidores externos
+- **Criptografia**: Credenciais são criptografadas localmente
+- **Controle Total**: Você pode deletar todos os dados a qualquer momento
+
+## 📋 Dependências
+
+```
+streamlit>=1.28.0
+garminconnect>=0.2.30
+pandas>=2.0.0
+plotly>=5.14.0
 ```
 
-### 2. Execute a aplicação
+## 🛠️ Desenvolvimento
 
-```bash
-streamlit run app.py
-```
-
-A aplicação abrirá no seu navegador padrão (geralmente `http://localhost:8501`)
-
-## 📱 Uso no Android
-
-### Opção 1: Via Termux (Recomendado)
-
-1. Instale [Termux](https://termux.dev/) do F-Droid ou Play Store
-2. Instale Python: `pkg install python`
-3. Clone/baixe este projeto
-4. Execute: `cd /caminho/para/projeto && pip install -r requirements.txt && streamlit run app.py`
-5. Acesse em seu navegador: `http://localhost:8501`
-
-### Opção 2: Servidor remoto
-
-1. Inicie o app em um servidor com acesso à sua rede
-2. Acesse via: `http://seu-servidor:8501` no navegador do Android
-
-## 🎮 Guia de Uso
-
-### 📊 Dashboard
-- Visualize suas métricas atuais (Fitness, Fadiga, Equilíbrio)
-- Confira gráficos de evolução dos últimos 42 dias
-- Veja um histórico das métricas
-
-### ⚙️ Configuração
-**Credenciais Garmin Connect:**
-- Email e senha da sua conta Garmin Connect
-- ⚠️ Armazenados de forma segura apenas neste dispositivo
-
-**Parâmetros de Fitness:**
-- **Idade**: Sua idade em anos
-- **FTP (Watts)**: Seu limiar de potência funcional (para ciclismo)
-- **FC Repouso**: Sua frequência cardíaca em repouso
-- **FC Máxima**: Sua frequência cardíaca máxima
-- **Limiar de Pace (Corrida)**: Seu limiar de pace em formato mm:ss
-- **Limiar de Pace (Natação)**: Seu limiar de pace para natação em mm:ss
-
-### 🔄 Atualizar Dados
-- Clique em "Atualizar Dados Agora" para sincronizar com Garmin Connect
-- A aplicação buscará todas as atividades dos últimos 42 dias
-- Recalcula automaticamente CTL, ATL e TSB
-
-## 📊 Métricas Explicadas
-
-- **CTL (Chronic Training Load)**: Forma física acumulada (média de 42 dias)
-- **ATL (Acute Training Load)**: Fadiga recente (média de 7 dias)
-- **TSB (Training Stress Balance)**: Equilíbrio entre forma e fadiga (CTL - ATL)
-
-## 🔐 Segurança
-
-- As credenciais do Garmin Connect são armazenadas **apenas no seu dispositivo**
-- Arquivo: `~/.fitness_metrics/garmin_credentials.json` (permissões restritas)
-- Você pode deletar as credenciais a qualquer momento via interface
-- Nenhum dado é enviado para servidores externos
-
-## 📁 Estrutura de Arquivos
+### Estrutura do Projeto
 
 ```
-~/.fitness_metrics/
-├── garmin_credentials.json    # Credenciais (armazenadas localmente)
-├── user_config.json           # Parâmetros de fitness
-├── fitness_metrics.json       # Métricas calculadas
-└── workouts_42_dias.json      # Lista de atividades
+fitness-metrics/
+├── app.py                 # Aplicação principal Streamlit
+├── requirements.txt       # Dependências Python
+├── user_config.json       # Configurações do usuário
+├── utils.py              # Utilitários e funções auxiliares
+├── fitness_metrics_flutter/  # Versão mobile (Flutter)
+└── README.md             # Este arquivo
 ```
 
-## 🛠️ Solução de Problemas
+### Contribuição
 
-### "garminconnect não instalado"
-```bash
-pip install garminconnect
-```
-
-### Erro de conexão com Garmin
-- Verifique se seu email e senha estão corretos
-- Verifique sua conexão com a internet
-- Tente fazer login no site do Garmin manualmente
-
-### Dados não aparecem no Dashboard
-1. Vá para "⚙️ Configuração"
-2. Verifique se as credenciais estão corretas
-3. Clique em "🔄 Atualizar Dados Agora"
-4. Aguarde a sincronização
-
-## 📝 Notas
-
-- A aplicação respeita os limites da API do Garmin Connect
-- Dados são recalculados a cada atualização
-- Os parâmetros de fitness podem ser ajustados a qualquer momento
+1. Fork o projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/nova-feature`)
+3. Commit suas mudanças (`git commit -am 'Adiciona nova feature'`)
+4. Push para a branch (`git push origin feature/nova-feature`)
+5. Abra um Pull Request
 
 ## 📞 Suporte
 
-Para questões sobre o Garmin Connect, acesse: https://www.garmin.com/
+Para suporte ou dúvidas:
+
+1. Verifique a documentação neste README
+2. Abra uma issue no repositório
+3. Consulte os arquivos de documentação adicionais na raiz do projeto
 
 ## 📄 Licença
 
-Este projeto é fornecido como está. Use por sua conta e risco.
+Este projeto está sob a licença MIT. Veja o arquivo LICENSE para mais detalhes.
+
+## 🙏 Agradecimentos
+
+- Garmin Connect API pela integração de dados
+- Comunidade de treinamento por compartilhar conhecimento sobre métricas de fitness
+- Streamlit pela plataforma de desenvolvimento
+
+---
+
+**💡 Dica**: Para melhores resultados, mantenha suas configurações de fitness atualizadas e sincronize regularmente com o Garmin Connect.</content>
+<parameter name="filePath">c:\Users\deivi\Developer\README.md

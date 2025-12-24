@@ -3,7 +3,7 @@ showErrorDetails = false
 toolbarMode = "minimal"
 
 [logger]
-level = "error"
+level = "warning"
 
 [server]
 headless = true
@@ -22,10 +22,3 @@ font = "sans serif"
 
 [browser]
 gatherUsageStats = false
-
-# Otimizações para mobile
-[client]
-toolbarMode = "minimal"
-
-[logger]
-level = "warning"
