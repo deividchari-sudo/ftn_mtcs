@@ -1,2020 +1,3033 @@
-import streamlit as st
+import dash
+from dash import html, dcc, Input, Output, State
+import dash_bootstrap_components as dbc
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pandas as pd
 import json
 import os
-import calendar
-from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
-from pathlib import Path
-import time
 import numpy as np
-from functools import lru_cache
-import hashlib
+import math
+from datetime import datetime, timedelta
+from pathlib import Path
+import calendar
 
-# Importar utilitários
-from utils import (
-    format_duration, format_hours_decimal, generate_activity_html,
-    get_file_hash, is_file_changed
-)
+from utils import *
 
-# Configuração da página
-st.set_page_config(
-    page_title="Fitness Metrics",
-    page_icon="💪",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# Função auxiliar para converter horas decimais em hh:mm:ss
+def format_hours_to_hms(hours):
+    """Converte horas decimais para formato hh:mm:ss"""
+    if hours == 0:
+        return "00:00:00"
+    h = int(hours)
+    m = int((hours - h) * 60)
+    s = int(((hours - h) * 60 - m) * 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
-# CSS customizado - Tema Claro Moderno
-st.markdown("""
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+
+# Configurações
+DATA_DIR = Path.home() / ".fitness_metrics"
+DATA_DIR.mkdir(exist_ok=True)
+
+CONFIG_FILE = DATA_DIR / "user_config.json"
+CREDENTIALS_FILE = DATA_DIR / "garmin_credentials.json"
+METRICS_FILE = DATA_DIR / "fitness_metrics.json"
+WORKOUTS_FILE = DATA_DIR / "workouts_42_dias.json"
+
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUX])
+app.title = "Fitness Metrics Dashboard"
+
+# CSS customizado para aparência moderna
+custom_css = """
 <style>
-    /* ========== TEMA BASE ========== */
-    * {
-        transition: all 0.3s ease !important;
+/* ========== ANIMAÇÕES E TRANSIÇÕES ========== */
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
     }
-    
-    html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%) !important;
-        color: #212529 !important;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    to {
+        opacity: 1;
+        transform: translateY(0);
     }
-    
-    /* ========== SIDEBAR ========== */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #ffffff 0%, #f8f9fa 100%) !important;
-        box-shadow: 2px 0 10px rgba(0,0,0,0.05) !important;
+}
+
+@keyframes progressFill {
+    from {
+        width: 0;
     }
-    [data-testid="stSidebar"] > div:first-child {
-        background: transparent !important;
+    to {
+        width: var(--progress-width);
     }
-    [data-testid="stSidebar"] * {
-        color: #212529 !important;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.4);
     }
-    [data-testid="stSidebar"] h1 {
-        color: #0d6efd !important;
-        font-weight: 700 !important;
-        text-shadow: 0 2px 4px rgba(13,110,253,0.1) !important;
+    50% {
+        box-shadow: 0 0 0 8px rgba(102, 126, 234, 0);
     }
-    
-    /* Radio buttons no menu */
-    [data-testid="stSidebar"] .stRadio > label {
-        color: #212529 !important;
-        font-weight: 600 !important;
-        font-size: 0.9rem !important;
+}
+
+/* ========== CARDS COM HIERARQUIA VISUAL ========== */
+.card {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+                box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    animation: slideInUp 0.5s ease-out;
+    border: none !important;
+}
+
+.card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 24px rgba(0,0,0,0.12), 0 8px 16px rgba(0,0,0,0.08) !important;
+}
+
+/* Cards de status com destaque */
+.status-card {
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.status-card:hover {
+    transform: scale(1.03);
+    animation: pulse 2s infinite;
+}
+
+.status-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.1) 100%);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.status-card:hover::before {
+    opacity: 1;
+}
+
+/* ========== PROGRESS BARS ANIMADAS COM GRADIENTE ========== */
+.progress {
+    border-radius: 12px;
+    background: linear-gradient(90deg, #e9ecef 0%, #f8f9fa 100%);
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+    height: 12px !important;
+    overflow: visible;
+    position: relative;
+}
+
+.progress-bar {
+    border-radius: 12px;
+    transition: width 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+/* Gradientes para diferentes cores de progresso */
+.progress-bar.bg-success {
+    background: linear-gradient(90deg, #28a745 0%, #20c997 50%, #28a745 100%) !important;
+    background-size: 200% 100% !important;
+    animation: shimmer 3s infinite;
+    box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+}
+
+.progress-bar.bg-primary {
+    background: linear-gradient(90deg, #007bff 0%, #0056b3 50%, #007bff 100%) !important;
+    background-size: 200% 100% !important;
+    animation: shimmer 3s infinite;
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
+}
+
+.progress-bar.bg-warning {
+    background: linear-gradient(90deg, #ffc107 0%, #ffb300 50%, #ffc107 100%) !important;
+    background-size: 200% 100% !important;
+    animation: shimmer 3s infinite;
+    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3);
+}
+
+.progress-bar.bg-info {
+    background: linear-gradient(90deg, #17a2b8 0%, #138496 50%, #17a2b8 100%) !important;
+    background-size: 200% 100% !important;
+    animation: shimmer 3s infinite;
+    box-shadow: 0 2px 8px rgba(23, 162, 184, 0.3);
+}
+
+.progress-bar.bg-danger {
+    background: linear-gradient(90deg, #dc3545 0%, #c82333 50%, #dc3545 100%) !important;
+    background-size: 200% 100% !important;
+    animation: shimmer 3s infinite;
+    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: 200% 0;
     }
-    [data-testid="stSidebar"] [role="radiogroup"] label {
-        background: #fff !important;
-        border: 2px solid #e9ecef !important;
-        border-radius: 8px !important;
-        padding: 12px 16px !important;
-        margin: 4px 0 !important;
-        cursor: pointer !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.04) !important;
+    100% {
+        background-position: -200% 0;
     }
-    [data-testid="stSidebar"] [role="radiogroup"] label:hover {
-        border-color: #0d6efd !important;
-        background: #e7f1ff !important;
-        transform: translateX(4px) !important;
+}
+
+/* Indicador de porcentagem na barra */
+.progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(to bottom, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 100%);
+    border-radius: 12px;
+}
+
+/* ========== TABELAS MODERNAS ========== */
+.table {
+    font-size: 0.9rem;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.table th {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    font-weight: 600;
+    border: none;
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    font-size: 0.85rem;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    position: relative;
+}
+
+.table th::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+}
+
+.table td {
+    vertical-align: middle;
+    padding: 0.6rem 0.5rem;
+    border-bottom: 1px solid #e9ecef;
+    font-size: 0.85rem;
+    transition: background-color 0.2s ease;
+}
+
+.table tbody tr:nth-of-type(odd) {
+    background-color: rgba(0, 123, 255, 0.02);
+}
+
+.table tbody tr:hover {
+    background: linear-gradient(90deg, rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.08));
+    transform: scale(1.01);
+    transition: all 0.2s ease;
+}
+
+/* ========== SEPARADORES VISUAIS ========== */
+hr {
+    border: 0;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, #e9ecef 20%, #e9ecef 80%, transparent);
+    margin: 3rem 0;
+    position: relative;
+}
+
+hr::after {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60px;
+    height: 5px;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    border-radius: 3px;
+}
+
+/* ========== HEADERS DE SEÇÃO ========== */
+.section-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    position: relative;
+    display: inline-block;
+}
+
+/* ========== TIPOGRAFIA COM HIERARQUIA ========== */
+h1 {
+    font-weight: 800 !important;
+    letter-spacing: -0.5px;
+    line-height: 1.2;
+    margin-bottom: 0.5rem;
+}
+
+h2 {
+    font-weight: 700 !important;
+    letter-spacing: -0.3px;
+    line-height: 1.3;
+}
+
+h3, h4 {
+    font-weight: 600 !important;
+    letter-spacing: -0.2px;
+}
+
+h5, h6 {
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 0.85rem;
+}
+
+/* ========== ACCORDION MODERNO ========== */
+.accordion-button {
+    border-radius: 10px !important;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+}
+
+.accordion-button:not(.collapsed) {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.accordion-button:hover {
+    transform: translateX(4px);
+}
+
+/* ========== ESPAÇAMENTO COM HIERARQUIA ========== */
+.mb-5 {
+    margin-bottom: 3rem !important;
+}
+
+.mb-4 {
+    margin-bottom: 2rem !important;
+}
+
+.mb-3 {
+    margin-bottom: 1.5rem !important;
+}
+
+.py-4 {
+    padding-top: 2rem !important;
+    padding-bottom: 2rem !important;
+}
+
+.py-3 {
+    padding-top: 1.5rem !important;
+    padding-bottom: 1.5rem !important;
+}
+
+/* ========== BADGES MODERNOS ========== */
+.badge {
+    font-weight: 600;
+    padding: 0.4em 0.8em;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    transition: all 0.2s ease;
+}
+
+.badge:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+/* ========== EFEITOS DE FOCO E INTERAÇÃO ========== */
+*:focus {
+    outline: 2px solid rgba(102, 126, 234, 0.5);
+    outline-offset: 2px;
+}
+
+/* ========== LOADING E SKELETON ========== */
+@keyframes skeleton-loading {
+    0% {
+        background-position: 200% 0;
     }
-    
-    /* ========== HEADER & FOOTER ========== */
-    header[data-testid="stHeader"] {
-        background: rgba(255,255,255,0.95) !important;
-        backdrop-filter: blur(10px) !important;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05) !important;
+    100% {
+        background-position: -200% 0;
     }
-    footer {
-        background: #f8f9fa !important;
-        color: #6c757d !important;
-        border-top: 1px solid #e9ecef !important;
-    }
-    
-    /* ========== TÍTULOS ========== */
-    h1, h2, h3, h4, h5, h6 {
-        color: #212529 !important;
-        font-weight: 700 !important;
-        letter-spacing: -0.5px !important;
-    }
-    h1 {
-        font-size: 1.8rem !important;
-        background: linear-gradient(135deg, #0d6efd 0%, #0dcaf0 100%) !important;
-        -webkit-background-clip: text !important;
-        -webkit-text-fill-color: transparent !important;
-    }
-    h2 {
-        font-size: 1.4rem !important;
-    }
-    h3 {
-        font-size: 1.1rem !important;
-    }
-    
-    /* ========== INPUTS ========== */
-    input, textarea, select {
-        background: #fff !important;
-        color: #212529 !important;
-        border: 2px solid #e9ecef !important;
-        border-radius: 8px !important;
-        padding: 8px 12px !important;
-        font-size: 0.85rem !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
-    }
-    input:focus, textarea:focus, select:focus {
-        border-color: #0d6efd !important;
-        box-shadow: 0 0 0 0.25rem rgba(13,110,253,0.15) !important;
-        outline: none !important;
-    }
-    
-    [data-baseweb="input"] input,
-    [data-baseweb="input"] textarea {
-        background: #fff !important;
-        border: 2px solid #e9ecef !important;
-        border-radius: 8px !important;
-    }
-    
-    /* ========== LABELS ========== */
-    label, [data-testid="stWidgetLabel"] label {
-        color: #495057 !important;
-        font-weight: 600 !important;
-        font-size: 0.8rem !important;
-        text-transform: uppercase !important;
-        letter-spacing: 0.5px !important;
-        margin-bottom: 8px !important;
-    }
-    
-    /* ========== BOTÕES ========== */
-    .stButton > button {
-        background: linear-gradient(135deg, #0d6efd 0%, #0dcaf0 100%) !important;
-        color: #fff !important;
-        border: none !important;
-        border-radius: 10px !important;
-        padding: 10px 20px !important;
-        font-weight: 600 !important;
-        font-size: 0.85rem !important;
-        box-shadow: 0 4px 12px rgba(13,110,253,0.25) !important;
-        cursor: pointer !important;
-        text-transform: uppercase !important;
-        letter-spacing: 0.5px !important;
-    }
-    .stButton > button:hover {
-        background: linear-gradient(135deg, #0b5ed7 0%, #0aa2c0 100%) !important;
-        transform: translateY(-2px) !important;
-        box-shadow: 0 6px 20px rgba(13,110,253,0.35) !important;
-    }
-    .stButton > button:active {
-        transform: translateY(0) !important;
-        box-shadow: 0 2px 8px rgba(13,110,253,0.3) !important;
-    }
-    
-    /* ========== TABELAS ========== */
-    .stDataFrame, [data-testid="stDataFrame"] {
-        background: #fff !important;
-        border-radius: 12px !important;
-        border: 1px solid #e9ecef !important;
-        overflow: hidden !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
-    }
-    .stDataFrame thead th {
-        background: linear-gradient(135deg, #0d6efd 0%, #0dcaf0 100%) !important;
-        color: #fff !important;
-        font-weight: 700 !important;
-        text-transform: uppercase !important;
-        letter-spacing: 0.5px !important;
-        padding: 14px !important;
-        border: none !important;
-    }
-    .stDataFrame tbody td {
-        background: #fff !important;
-        color: #212529 !important;
-        padding: 12px !important;
-        border-bottom: 1px solid #f8f9fa !important;
-    }
-    .stDataFrame tbody tr:hover td {
-        background: #e7f1ff !important;
-    }
-    
-    /* ========== EXPANDER ========== */
-    [data-testid="stExpander"] {
-        background: #fff !important;
-        border: 2px solid #e9ecef !important;
-        border-radius: 12px !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
-        margin: 16px 0 !important;
-    }
-    [data-testid="stExpander"] > div:first-child {
-        background: linear-gradient(135deg, #e7f1ff 0%, #cfe2ff 100%) !important;
-        border-radius: 10px !important;
-        padding: 4px !important;
-    }
-    [data-testid="stExpander"] button {
-        background: transparent !important;
-        color: #0d6efd !important;
-        font-weight: 700 !important;
-        font-size: 0.9rem !important;
-        border: none !important;
-    }
-    [data-testid="stExpander"] svg {
-        color: #0d6efd !important;
-    }
-    
-    /* ========== ALERTAS ========== */
-    .stAlert, [data-testid="stAlert"] {
-        border-radius: 10px !important;
-        border-left: 4px solid !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
-    }
-    
-    /* ========== MÉTRICAS ========== */
-    [data-testid="stMetric"] {
-        background: #fff !important;
-        border-radius: 12px !important;
-        padding: 20px !important;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.08) !important;
-        border: 2px solid #e9ecef !important;
-    }
-    [data-testid="stMetric"]:hover {
-        transform: translateY(-4px) !important;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.12) !important;
-        border-color: #0d6efd !important;
-    }
-    [data-testid="stMetric"] label {
-        color: #6c757d !important;
-        font-size: 0.75rem !important;
-        font-weight: 600 !important;
-    }
-    [data-testid="stMetric"] [data-testid="stMetricValue"] {
-        color: #0d6efd !important;
-        font-size: 1.6rem !important;
-        font-weight: 700 !important;
-    }
-    
-    /* ========== CARDS BOOTSTRAP ========== */
-    .card {
-        background: #fff !important;
-        border: 2px solid #e9ecef !important;
-        border-radius: 12px !important;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.06) !important;
-    }
-    .card:hover {
-        transform: translateY(-4px) !important;
-        box-shadow: 0 8px 28px rgba(0,0,0,0.12) !important;
-        border-color: #0d6efd !important;
-    }
-    
-    /* ========== SCROLLBAR ========== */
-    ::-webkit-scrollbar {
-        width: 10px !important;
-        height: 10px !important;
-    }
-    ::-webkit-scrollbar-track {
-        background: #f8f9fa !important;
-        border-radius: 10px !important;
-    }
-    ::-webkit-scrollbar-thumb {
-        background: linear-gradient(135deg, #0d6efd 0%, #0dcaf0 100%) !important;
-        border-radius: 10px !important;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-        background: linear-gradient(135deg, #0b5ed7 0%, #0aa2c0 100%) !important;
-    }
-    
-    /* ========== RESPONSIVE ========== */
-    @media (max-width: 768px) {
-        h1 { font-size: 1.8rem !important; }
-        .stButton > button {
-            width: 100% !important;
-            padding: 14px !important;
-        }
-        [data-testid="stMetric"] {
-            padding: 16px !important;
-        }
-    }
+}
+
+.skeleton {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s infinite;
+}
+
+/* ========== MODO ESCURO ========== */
+body.dark-mode {
+    background-color: #1a1a1a !important;
+    color: #e0e0e0 !important;
+}
+
+body.dark-mode .card {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+body.dark-mode .bg-light {
+    background-color: #2d2d2d !important;
+}
+
+body.dark-mode .table {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+}
+
+body.dark-mode .table tbody tr:hover {
+    background: linear-gradient(90deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2)) !important;
+}
+
+body.dark-mode .text-muted {
+    color: #999 !important;
+}
+
+/* Botão de toggle modo escuro */
+.dark-mode-toggle {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    border-radius: 50px;
+    padding: 8px 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transition: all 0.3s ease;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.dark-mode-toggle:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+}
+
+/* ========== ESTILOS MODO ESCURO ========== */
+/* Background e cores base */
+#app-container[style*="background-color: rgb(36, 36, 40)"],
+#app-container[style*="backgroundColor: #242428"] {
+    background-color: #0d1117 !important;
+}
+
+/* Cards - estilo Strava dark */
+#app-container[style*="background-color: rgb(36, 36, 40)"] .card,
+#app-container[style*="backgroundColor: #242428"] .card {
+    background-color: #2D2D31 !important;
+    color: #FFFFFF !important;
+    border: 1px solid #404044 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+    transition: all 0.3s ease !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .card:hover,
+#app-container[style*="backgroundColor: #242428"] .card:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+    border-color: #505054 !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .card-header,
+#app-container[style*="backgroundColor: #242428"] .card-header {
+    background-color: #0d1117 !important;
+    color: #c9d1d9 !important;
+    border-bottom: 1px solid #30363d !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .card-body,
+#app-container[style*="backgroundColor: #242428"] .card-body {
+    background-color: #2D2D31 !important;
+    color: #c9d1d9 !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .bg-light,
+#app-container[style*="backgroundColor: #242428"] .bg-light {
+    background-color: #2D2D31 !important;
+}
+
+/* Todos os títulos e textos */
+#app-container[style*="background-color: rgb(36, 36, 40)"] h1,
+#app-container[style*="backgroundColor: #242428"] h1,
+#app-container[style*="background-color: rgb(36, 36, 40)"] h2,
+#app-container[style*="backgroundColor: #242428"] h2,
+#app-container[style*="background-color: rgb(36, 36, 40)"] h3,
+#app-container[style*="backgroundColor: #242428"] h3,
+#app-container[style*="background-color: rgb(36, 36, 40)"] h4,
+#app-container[style*="backgroundColor: #242428"] h4,
+#app-container[style*="background-color: rgb(36, 36, 40)"] h5,
+#app-container[style*="backgroundColor: #242428"] h5,
+#app-container[style*="background-color: rgb(36, 36, 40)"] h6,
+#app-container[style*="backgroundColor: #242428"] h6,
+#app-container[style*="background-color: rgb(36, 36, 40)"] p,
+#app-container[style*="backgroundColor: #242428"] p,
+#app-container[style*="background-color: rgb(36, 36, 40)"] span,
+#app-container[style*="backgroundColor: #242428"] span,
+#app-container[style*="background-color: rgb(36, 36, 40)"] div,
+#app-container[style*="backgroundColor: #242428"] div,
+#app-container[style*="background-color: rgb(36, 36, 40)"] label,
+#app-container[style*="backgroundColor: #242428"] label,
+#app-container[style*="background-color: rgb(36, 36, 40)"] strong,
+#app-container[style*="backgroundColor: #242428"] strong,
+#app-container[style*="background-color: rgb(36, 36, 40)"] b,
+#app-container[style*="backgroundColor: #242428"] b {
+    color: #c9d1d9 !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .text-muted,
+#app-container[style*="backgroundColor: #242428"] .text-muted {
+    color: #8b949e !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .text-secondary,
+#app-container[style*="backgroundColor: #242428"] .text-secondary {
+    color: #8b949e !important;
+}
+
+/* Forçar cor clara em elementos específicos */
+#app-container[style*="background-color: rgb(36, 36, 40)"] [style*="color: rgb(33, 37, 41)"],
+#app-container[style*="backgroundColor: #242428"] [style*="color: rgb(33, 37, 41)"],
+#app-container[style*="background-color: rgb(36, 36, 40)"] [style*="color: #212529"],
+#app-container[style*="backgroundColor: #242428"] [style*="color: #212529"] {
+    color: #c9d1d9 !important;
+}
+
+/* Tabelas */
+#app-container[style*="background-color: rgb(36, 36, 40)"] .table,
+#app-container[style*="backgroundColor: #242428"] .table {
+    background-color: transparent !important;
+    color: #c9d1d9 !important;
+    border-color: #30363d !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .table thead th,
+#app-container[style*="backgroundColor: #242428"] .table thead th {
+    background-color: #0d1117 !important;
+    color: #c9d1d9 !important;
+    border-color: #30363d !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .table tbody td,
+#app-container[style*="backgroundColor: #242428"] .table tbody td {
+    color: #c9d1d9 !important;
+    border-color: #30363d !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .table tbody tr:hover,
+#app-container[style*="backgroundColor: #242428"] .table tbody tr:hover {
+    background-color: rgba(56, 139, 253, 0.1) !important;
+}
+
+/* Badges - cores vibrantes Strava */
+#app-container[style*="background-color: rgb(36, 36, 40)"] .badge,
+#app-container[style*="backgroundColor: #242428"] .badge {
+    background-color: #38383C !important;
+    color: #6BB6FF !important;
+    border: 1px solid #404044 !important;
+    font-weight: 600 !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3) !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .badge-success,
+#app-container[style*="backgroundColor: #242428"] .badge-success {
+    background-color: #2EA043 !important;
+    color: white !important;
+    border-color: #3FB950 !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .badge-warning,
+#app-container[style*="backgroundColor: #242428"] .badge-warning {
+    background-color: #FFA500 !important;
+    color: white !important;
+    border-color: #FFB84D !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .badge-danger,
+#app-container[style*="backgroundColor: #242428"] .badge-danger {
+    background-color: #F85149 !important;
+    color: white !important;
+    border-color: #FF6B6B !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .badge-primary,
+#app-container[style*="backgroundColor: #242428"] .badge-primary {
+    background-color: #FC5200 !important;
+    color: white !important;
+    border-color: #FF6B35 !important;
+}
+
+/* Progress bars - estilo Strava */
+#app-container[style*="background-color: rgb(36, 36, 40)"] .progress,
+#app-container[style*="backgroundColor: #242428"] .progress {
+    background-color: #38383C !important;
+    border-radius: 8px !important;
+    height: 12px !important;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .progress-bar,
+#app-container[style*="backgroundColor: #242428"] .progress-bar {
+    background: linear-gradient(135deg, #FC5200 0%, #FF6B35 100%) !important;
+    box-shadow: 0 2px 4px rgba(252, 82, 0, 0.3) !important;
+    transition: width 0.6s ease !important;
+}
+
+/* Botões no modo escuro */
+#app-container[style*="background-color: rgb(36, 36, 40)"] .btn-primary,
+#app-container[style*="backgroundColor: #242428"] .btn-primary {
+    background: linear-gradient(135deg, #FC5200 0%, #FF6B35 100%) !important;
+    border: none !important;
+    color: white !important;
+    box-shadow: 0 4px 12px rgba(252, 82, 0, 0.3) !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .btn-primary:hover,
+#app-container[style*="backgroundColor: #242428"] .btn-primary:hover {
+    box-shadow: 0 6px 16px rgba(252, 82, 0, 0.5) !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .btn-success,
+#app-container[style*="backgroundColor: #242428"] .btn-success {
+    background: linear-gradient(135deg, #2EA043 0%, #3FB950 100%) !important;
+    border: none !important;
+    box-shadow: 0 4px 12px rgba(46, 160, 67, 0.3) !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .btn-success:hover,
+#app-container[style*="backgroundColor: #242428"] .btn-success:hover {
+    box-shadow: 0 6px 16px rgba(46, 160, 67, 0.5) !important;
+}
+
+/* Abas */
+#app-container[style*="background-color: rgb(36, 36, 40)"] .nav-tabs,
+#app-container[style*="backgroundColor: #242428"] .nav-tabs {
+    border-bottom-color: #30363d !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .nav-tabs .nav-link,
+#app-container[style*="backgroundColor: #242428"] .nav-tabs .nav-link {
+    color: #A0A0A5 !important;
+    border-color: transparent !important;
+    background-color: transparent !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .nav-tabs .nav-link.active,
+#app-container[style*="backgroundColor: #242428"] .nav-tabs .nav-link.active {
+    background-color: #2D2D31 !important;
+    color: #FFFFFF !important;
+    border-color: #404044 #404044 #2D2D31 !important;
+    font-weight: 600 !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .nav-tabs .nav-link:hover,
+#app-container[style*="backgroundColor: #242428"] .nav-tabs .nav-link:hover {
+    color: #FFFFFF !important;
+    border-color: #404044 #404044 transparent !important;
+    background-color: rgba(45, 45, 49, 0.5) !important;
+}
+
+/* Alertas - cores vibrantes Strava */
+#app-container[style*="background-color: rgb(36, 36, 40)"] .alert,
+#app-container[style*="backgroundColor: #242428"] .alert {
+    background-color: #2D2D31 !important;
+    border: 1px solid #404044 !important;
+    color: #FFFFFF !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .alert-info,
+#app-container[style*="backgroundColor: #242428"] .alert-info {
+    background-color: rgba(56, 139, 253, 0.15) !important;
+    border-color: #388bfd !important;
+    color: #6BB6FF !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .alert-success,
+#app-container[style*="backgroundColor: #242428"] .alert-success {
+    background-color: rgba(46, 160, 67, 0.15) !important;
+    border-color: #2ea043 !important;
+    color: #5DD879 !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .alert-warning,
+#app-container[style*="backgroundColor: #242428"] .alert-warning {
+    background-color: rgba(255, 165, 0, 0.15) !important;
+    border-color: #FFA500 !important;
+    color: #FFB84D !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] .alert-danger,
+#app-container[style*="backgroundColor: #242428"] .alert-danger {
+    background-color: rgba(248, 81, 73, 0.15) !important;
+    border-color: #f85149 !important;
+    color: #FF6B6B !important;
+}
+
+/* HR separador */
+#app-container[style*="background-color: rgb(36, 36, 40)"] hr,
+#app-container[style*="backgroundColor: #242428"] hr {
+    border-color: #404044 !important;
+    opacity: 1 !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] hr::after,
+#app-container[style*="backgroundColor: #242428"] hr::after {
+    background: linear-gradient(90deg, #FC5200, #FF6B35) !important;
+}
+
+/* Botão modo escuro quando ativo - laranja Strava */
+#app-container[style*="background-color: rgb(36, 36, 40)"] .dark-mode-toggle,
+#app-container[style*="backgroundColor: #242428"] .dark-mode-toggle {
+    background: linear-gradient(135deg, #FC5200 0%, #FF6B35 100%) !important;
+    box-shadow: 0 4px 16px rgba(252, 82, 0, 0.4) !important;
+}
+
+/* Inputs e forms */
+#app-container[style*="background-color: rgb(36, 36, 40)"] input,
+#app-container[style*="backgroundColor: #242428"] input,
+#app-container[style*="background-color: rgb(36, 36, 40)"] select,
+#app-container[style*="backgroundColor: #242428"] select,
+#app-container[style*="background-color: rgb(36, 36, 40)"] textarea,
+#app-container[style*="backgroundColor: #242428"] textarea {
+    background-color: #1A1A1E !important;
+    color: #FFFFFF !important;
+    border-color: #404044 !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] input:focus,
+#app-container[style*="backgroundColor: #242428"] input:focus,
+#app-container[style*="background-color: rgb(36, 36, 40)"] select:focus,
+#app-container[style*="backgroundColor: #242428"] select:focus,
+#app-container[style*="background-color: rgb(36, 36, 40)"] textarea:focus,
+#app-container[style*="backgroundColor: #242428"] textarea:focus {
+    border-color: #FC5200 !important;
+    box-shadow: 0 0 0 0.2rem rgba(252, 82, 0, 0.25) !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] input::placeholder,
+#app-container[style*="backgroundColor: #242428"] input::placeholder {
+    color: #8b949e !important;
+}
+
+/* Scrollbar customizada modo escuro */
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar {
+    width: 12px !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-track,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-track {
+    background: #1A1A1E !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb {
+    background: #404044 !important;
+    border-radius: 6px !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb:hover,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb:hover {
+    background: #505054 !important;
+}
+
+/* Links no modo escuro */
+#app-container[style*="background-color: rgb(36, 36, 40)"] a,
+#app-container[style*="backgroundColor: #242428"] a {
+    color: #6BB6FF !important;
+    transition: color 0.2s ease !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] a:hover,
+#app-container[style*="backgroundColor: #242428"] a:hover {
+    color: #FC5200 !important;
+}
+
+/* Scrollbar customizada modo escuro */
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar {
+    width: 12px !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-track,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-track {
+    background: #1A1A1E !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb {
+    background: #404044 !important;
+    border-radius: 6px !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb:hover,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb:hover {
+    background: #505054 !important;
+}
+
+/* Links no modo escuro */
+#app-container[style*="background-color: rgb(36, 36, 40)"] a,
+#app-container[style*="backgroundColor: #242428"] a {
+    color: #6BB6FF !important;
+    text-decoration: none !important;
+    transition: color 0.2s ease !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] a:hover,
+#app-container[style*="backgroundColor: #242428"] a:hover {
+    color: #FC5200 !important;
+    text-decoration: underline !important;
+}
+
+/* Scrollbar customizada modo escuro */
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar {
+    width: 12px !important;
+    height: 12px !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-track,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-track {
+    background: #1A1A1E !important;
+    border-radius: 6px !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb {
+    background: #404044 !important;
+    border-radius: 6px !important;
+}
+
+#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb:hover,
+#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb:hover {
+    background: #505054 !important;
+}
+
+/* ========== BOTÕES MODERNOS ========== */
+.btn {
+    transition: all 0.3s ease;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: 8px;
+    padding: 0.5rem 1.5rem;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border: none;
+}
+
+.btn-success {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    border: none;
+}
+
+/* ========== TOOLTIPS INFORMATIVOS ========== */
+.info-tooltip {
+    position: relative;
+    display: inline-block;
+    margin-left: 5px;
+    cursor: help;
+}
+
+.info-tooltip .tooltip-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.info-tooltip .tooltip-text {
+    visibility: hidden;
+    width: 280px;
+    background-color: #2D2D31;
+    color: #FFFFFF;
+    text-align: left;
+    border-radius: 8px;
+    padding: 12px;
+    position: absolute;
+    z-index: 10000;
+    bottom: 125%;
+    left: 50%;
+    margin-left: -140px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.info-tooltip .tooltip-text::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #2D2D31 transparent transparent transparent;
+}
+
+.info-tooltip:hover .tooltip-text {
+    visibility: visible;
+    opacity: 1;
+}
+
+/* ========== BADGE DE ÚLTIMA ATUALIZAÇÃO ========== */
+.last-update-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
+    border: 1px solid rgba(102, 126, 234, 0.3);
+    border-radius: 20px;
+    font-size: 0.8rem;
+    color: #667eea;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* ========== ATALHOS DE TECLADO ========== */
+.keyboard-shortcuts {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    z-index: 9998;
+    background: rgba(45, 45, 49, 0.95);
+    color: white;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    display: none;
+}
+
+.keyboard-shortcuts.show {
+    display: block;
+    animation: slideInUp 0.3s ease;
+}
+
+.keyboard-shortcuts kbd {
+    background: #38383C;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    border: 1px solid #404044;
+}
 </style>
-""", unsafe_allow_html=True)
+"""
 
-# Diretório para armazenar credenciais localmente
-LOCAL_STORAGE_DIR = Path.home() / ".fitness_metrics"
-LOCAL_STORAGE_DIR.mkdir(exist_ok=True)
+app.css.append_css({"external_url": custom_css})
 
-CONFIG_FILE = LOCAL_STORAGE_DIR / "user_config.json"
-CREDENTIALS_FILE = LOCAL_STORAGE_DIR / "garmin_credentials.json"
-METRICS_FILE = LOCAL_STORAGE_DIR / "fitness_metrics.json"
-WORKOUTS_FILE = LOCAL_STORAGE_DIR / "workouts_42_dias.json"
-
-# Cache global para dados processados
-_data_cache = {}
-_file_hashes = {}
-
-def get_file_hash(file_path):
-    """Calcula hash do arquivo para detectar mudanças"""
-    if not file_path.exists():
-        return None
-    with open(file_path, "rb") as f:
-        return hashlib.md5(f.read()).hexdigest()
-
-def is_file_changed(file_path):
-    """Verifica se arquivo mudou desde último acesso"""
-    current_hash = get_file_hash(file_path)
-    last_hash = _file_hashes.get(str(file_path))
-    if current_hash != last_hash:
-        _file_hashes[str(file_path)] = current_hash
-        return True
-    return False
-
-@lru_cache(maxsize=1)
-def load_config_cached():
-    """Carrega configurações com cache"""
-    return load_config()
-
-@lru_cache(maxsize=1)
-def load_workouts_cached():
-    """Carrega workouts com cache baseado em hash do arquivo"""
-    if is_file_changed(WORKOUTS_FILE):
-        _data_cache['workouts'] = load_workouts()
-        _data_cache['workouts_processed'] = None  # Invalidar cache processado
-    return _data_cache.get('workouts', [])
-
-@lru_cache(maxsize=1)
-def load_metrics_cached():
-    """Carrega métricas com cache baseado em hash do arquivo"""
-    if is_file_changed(METRICS_FILE):
-        _data_cache['metrics'] = load_metrics()
-    return _data_cache.get('metrics', [])
-
-@lru_cache(maxsize=32)
-def compute_tss_cached(activity_json, config_json):
-    """Versão cached de compute_tss_variants"""
-    activity = json.loads(activity_json)
-    config = json.loads(config_json)
-    return compute_tss_variants(activity, config)
-
-def get_processed_workouts():
-    """Processa workouts uma vez e armazena em cache"""
-    if _data_cache.get('workouts_processed') is None:
-        workouts = load_workouts_cached()
-        config = load_config_cached()
-
-        if not workouts:
-            _data_cache['workouts_processed'] = []
-            return []
-
-        processed = []
-        config_json = json.dumps(config, sort_keys=True)
-
-        for workout in workouts:
-            # Calcular TSS uma vez
-            activity_json = json.dumps(workout, sort_keys=True)
-            tss_data = compute_tss_cached(activity_json, config_json)
-
-            processed_workout = {
-                'name': workout.get('activityName', 'Treino'),
-                'category': _activity_category(workout),
-                'duration': workout.get('duration', 0),
-                'distance': workout.get('distance', 0),
-                'start_time': workout.get('startTimeLocal') or workout.get('startTime', ''),
-                'tss': tss_data.get('tss', 0),
-                'tss_method': tss_data.get('tss_method', 'none'),
-                'date': None  # Será preenchido depois se necessário
+# Script JavaScript para funcionalidades extras
+app.index_string = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <script>
+        // Persistência do modo escuro
+        window.addEventListener('DOMContentLoaded', function() {
+            const savedDarkMode = localStorage.getItem('darkMode');
+            if (savedDarkMode === 'true') {
+                // Aguarda o componente carregar
+                setTimeout(() => {
+                    const toggleBtn = document.getElementById('dark-mode-toggle');
+                    if (toggleBtn) toggleBtn.click();
+                }, 100);
             }
-            processed.append(processed_workout)
-
-        _data_cache['workouts_processed'] = processed
-
-    return _data_cache['workouts_processed']
-
-def load_config():
-    """Carrega configurações de fitness do armazenamento local"""
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
-    return {
-        "age": 29,
-        "ftp": 250,
-        "pace_threshold": "4:22",
-        "swim_pace_threshold": "2:01",
-        "hr_rest": 50,
-        "hr_max": 191,
-        "hr_threshold": 162,
-        # Metas semanais
-        "weekly_distance_goal": 50.0,  # km
-        "weekly_tss_goal": 300,  # pontos TSS
-        "weekly_hours_goal": 7.0,  # horas
-        "weekly_activities_goal": 5,  # número de atividades
-        # Metas mensais
-        "monthly_distance_goal": 200.0,  # km
-        "monthly_tss_goal": 1200,  # pontos TSS
-        "monthly_hours_goal": 30.0,  # horas
-        "monthly_activities_goal": 20,  # número de atividades
-        # Metas de performance
-        "target_ctl": 50,  # CTL alvo
-        "target_atl_max": 80,  # ATL máximo permitido
-    }
-
-def save_config(config):
-    """Salva configurações de fitness no armazenamento local"""
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=4)
-
-def load_credentials():
-    """Carrega credenciais do Garmin do armazenamento local"""
-    if CREDENTIALS_FILE.exists():
-        with open(CREDENTIALS_FILE, "r") as f:
-            return json.load(f)
-    return {"email": "", "password": ""}
-
-def save_credentials(email, password):
-    """Salva credenciais do Garmin no armazenamento local (apenas no device)"""
-    # Definir permissões restritas no arquivo
-    with open(CREDENTIALS_FILE, "w") as f:
-        json.dump({"email": email, "password": password}, f, indent=4)
-    # Tentar restringir permissões de leitura (em Windows, Linux/Mac)
-    try:
-        os.chmod(CREDENTIALS_FILE, 0o600)
-    except:
-        pass
-
-def load_metrics():
-    """Carrega métricas de fitness do armazenamento local"""
-    if METRICS_FILE.exists():
-        with open(METRICS_FILE, "r") as f:
-            return json.load(f)
-    return []
-
-def save_metrics(metrics):
-    """Salva métricas de fitness no armazenamento local"""
-    with open(METRICS_FILE, "w") as f:
-        json.dump(metrics, f, indent=4)
-
-def load_workouts():
-    """Carrega lista de workouts do armazenamento local"""
-    if WORKOUTS_FILE.exists():
-        with open(WORKOUTS_FILE, "r") as f:
-            return json.load(f)
-    return []
-
-def save_workouts(workouts):
-    """Salva lista de workouts no armazenamento local"""
-    with open(WORKOUTS_FILE, "w") as f:
-        json.dump(workouts, f, indent=4)
-
-def calculate_trimp(activity, config):
-    """Calcula TRIMP (Training Impulse) para uma atividade"""
-    import math
-    
-    category = _activity_category(activity)
-
-    duration_sec = float(activity.get('duration', 0) or 0)
-    if duration_sec <= 0:
-        return 0.0
-    duration_min = duration_sec / 60.0
-    duration_h = duration_sec / 3600.0
-
-    hr_rest = float(config.get('hr_rest', 50) or 50)
-    hr_max = float(config.get('hr_max', 191) or 191)
-
-    def _avg_hr_value(a: dict) -> float:
-        v = (a.get('averageHR') or a.get('avgHR') or a.get('avgHr') or a.get('averageHeartRate') or a.get('avgHeartRate'))
-        return float(v or 0)
-
-    def _hr_trimp(avg_hr: float) -> float:
-        """
-        TRIMP por Frequência Cardíaca (Banister, 1991).
-        Fórmula: TRIMP = duração_min × (FC_avg - FC_repouso) / (FC_max - FC_repouso) × 0.64 × e^(1.92 × HRR)
-        Onde HRR = (FC_avg - FC_repouso) / (FC_max - FC_repouso)
+            
+            // Atalhos de teclado
+            document.addEventListener('keydown', function(e) {
+                // Ctrl/Cmd + D = Toggle modo escuro
+                if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+                    e.preventDefault();
+                    const toggleBtn = document.getElementById('dark-mode-toggle');
+                    if (toggleBtn) toggleBtn.click();
+                }
+                
+                // Ctrl/Cmd + K = Mostrar atalhos
+                if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                    e.preventDefault();
+                    alert('Atalhos de Teclado:\n\n' +
+                          'Ctrl+D: Alternar modo escuro\n' +
+                          'Ctrl+R: Atualizar dados\n' +
+                          'Ctrl+1/2/3/4: Navegar abas');
+                }
+                
+                // Ctrl/Cmd + 1-4 = Navegar entre abas
+                if ((e.ctrlKey || e.metaKey) && ['1','2','3','4'].includes(e.key)) {
+                    e.preventDefault();
+                    const tabs = ['dashboard', 'calendar', 'goals', 'config'];
+                    const tabIndex = parseInt(e.key) - 1;
+                    const tabButtons = document.querySelectorAll('[role="tab"]');
+                    if (tabButtons[tabIndex]) tabButtons[tabIndex].click();
+                }
+            });
+        });
         
-        Referência: TrainingPeaks TSS ≈ 30-40 para treino moderado de 1h (quando HR bem acima do limiar)
-        """
-        if avg_hr <= 0 or hr_max <= hr_rest:
-            return 0.0
-        hr_reserve = (avg_hr - hr_rest) / (hr_max - hr_rest)
-        hr_reserve = max(0.0, min(2.0, float(hr_reserve)))
-        # Fórmula original: duration_min × HRR × 0.64 × e^(1.92 × HRR)
-        # Ajuste: dividir por ~2-2.5 para alinhar com TrainingPeaks (evita valores muito altos)
-        trimp_raw = float(duration_min * hr_reserve * 0.64 * math.exp(1.92 * hr_reserve))
-        # Normalizar para escala TrainingPeaks (1 hora moderada ≈ 30-50 pontos)
-        return trimp_raw / 2.5
+        // Salvar preferência quando modo escuro mudar
+        window.saveDarkModePreference = function(isDark) {
+            localStorage.setItem('darkMode', isDark);
+        };
+        </script>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
 
-    avg_hr = _avg_hr_value(activity)
-
-    if category == 'cycling':
-        ftp = float(config.get('ftp', 0) or 0)
-        np_power = activity.get('normalizedPower') or activity.get('normPower')
-        avg_power = activity.get('averagePower') or activity.get('avgPower')
-        power = float(np_power or avg_power or 0)
-        if ftp > 0 and power > 0:
-            if_ = power / ftp
-            trimp = duration_h * (if_ ** 2) * 100.0
-        else:
-            trimp = _hr_trimp(avg_hr)
-
-    elif category == 'running':
-        if avg_hr > 0:
-            trimp = _hr_trimp(avg_hr)
-        else:
-            avg_speed = float(activity.get('averageSpeed', 0) or 0)
-            if avg_speed > 0:
-                pace_s_km = 1000.0 / avg_speed
-                threshold_sec = _parse_mmss_to_seconds(config.get('pace_threshold', '5:00'), default_seconds=300)
-                intensity = float(threshold_sec) / float(pace_s_km)
-                trimp = duration_h * (intensity ** 2) * 100.0
-            else:
-                trimp = 0.0
-
-    elif category == 'swimming':
-        # Natação tem TSS muito menor que corrida/ciclismo (FC mais baixa, menor impacto)
-        if avg_hr > 0:
-            # Usar HR-TRIMP mas com divisor maior específico para natação
-            if avg_hr <= 0 or hr_max <= hr_rest:
-                trimp = 0.0
-            else:
-                hr_reserve = (avg_hr - hr_rest) / (hr_max - hr_rest)
-                hr_reserve = max(0.0, min(2.0, float(hr_reserve)))
-                trimp_raw = float(duration_min * hr_reserve * 0.64 * math.exp(1.92 * hr_reserve))
-                # Natação: dividir por 9.0 (ao invés de 2.5) para refletir baixo impacto
-                trimp = trimp_raw / 9.0
-        else:
-            # Fallback: usar pace mas com fator de correção agressivo
-            distance_m = float(activity.get('distance', 0) or 0)
-            if distance_m > 0:
-                pace_sec_100m = (duration_sec / distance_m) * 100.0
-                threshold_sec = _parse_mmss_to_seconds(config.get('swim_pace_threshold', '2:30'), default_seconds=150)
-                intensity = float(threshold_sec) / float(pace_sec_100m)
-                trimp = (duration_h * (intensity ** 2) * 100.0) / 3.5
-            else:
-                trimp = duration_h * 22.0
-
-    else:
-        # Para força/outros, usa TRIMP por FC quando disponível
-        trimp = _hr_trimp(avg_hr)
+# Layout principal com header melhorado
+app.layout = html.Div(id='app-container', children=[
+    # Store para modo escuro
+    dcc.Store(id='dark-mode-store', data=False),
     
-    return trimp
-
-
-def _parse_mmss_to_seconds(value: str, default_seconds: int) -> int:
-    try:
-        if not value:
-            return default_seconds
-        parts = str(value).strip().split(':')
-        if len(parts) != 2:
-            return default_seconds
-        mm = int(parts[0])
-        ss = int(parts[1])
-        if mm < 0 or ss < 0 or ss >= 60:
-            return default_seconds
-        return mm * 60 + ss
-    except Exception:
-        return default_seconds
-
-
-def _activity_category(activity: dict) -> str:
-    """Categoriza atividade baseada no tipo"""
-    activity_type = activity.get('activityType', {})
-    if isinstance(activity_type, dict):
-        type_key = activity_type.get('typeKey', '').lower()
-    else:
-        type_key = str(activity_type).lower()
-
-    if type_key in [
-        'running', 'treadmill_running', 'track_running', 'trail_running', 'indoor_running', 'virtual_running'
-    ]:
-        return 'running'
-    if type_key in [
-        'cycling', 'road_cycling', 'mountain_biking', 'indoor_cycling', 'gravel_cycling', 'virtual_cycling',
-        'virtual_ride', 'indoor_biking', 'bike', 'biking', 'e_bike_ride', 'e_mountain_bike_ride',
-        'commute_cycling', 'touring_cycling', 'recumbent_cycling', 'cyclocross', 'road_biking',
-        'gravel_biking', 'tandem_cycling', 'bmx', 'fat_bike', 'track_cycling', 'spin_bike'
-    ]:
-        return 'cycling'
-    if type_key in ['swimming', 'pool_swimming', 'open_water_swimming', 'indoor_swimming', 'lap_swimming']:
-        return 'swimming'
-    if type_key in ['strength_training', 'weight_training', 'functional_strength_training', 'gym_strength_training', 'crossfit', 'hiit']:
-        return 'strength'
-    return 'other'
-
-
-def compute_tss_variants(activity: dict, config: dict) -> dict:
-    """Calcula TSS (power), rTSS (pace), sTSS (swim pace) e hrTSS (HR) quando possível.
-
-    Observação: são aproximações consistentes com o modelo $TSS \\approx horas \\cdot IF^2 \\cdot 100$.
-    """
-    duration_sec = float(activity.get('duration', 0) or 0)
-    if duration_sec <= 0:
-        return {
-            'tss': 0.0,
-            'rtss': 0.0,
-            'stss': 0.0,
-            'hrtss': 0.0,
-            'tss_method': 'none'
-        }
-
-    duration_h = duration_sec / 3600.0
-    category = _activity_category(activity)
-
-    # Power-based (TSS)
-    ftp = float(config.get('ftp', 0) or 0)
-    np_power = activity.get('normalizedPower') or activity.get('normPower')
-    avg_power = activity.get('averagePower') or activity.get('avgPower')
-    power = float(np_power or avg_power or 0)
-    tss = 0.0
-    if ftp > 0 and power > 0 and category == 'cycling':
-        if_ = power / ftp
-        tss = duration_h * (if_ ** 2) * 100.0
-
-    # Pace-based running (rTSS)
-    rtss = 0.0
-    avg_speed = float(activity.get('averageSpeed', 0) or 0)  # m/s
-    if avg_speed > 0 and category == 'running':
-        threshold_sec_per_km = _parse_mmss_to_seconds(config.get('pace_threshold', '5:00'), default_seconds=300)
-        threshold_speed = 1000.0 / float(threshold_sec_per_km)  # m/s
-        if threshold_speed > 0:
-            if_ = avg_speed / threshold_speed
-            # Ajuste: multiplicar por 1.15 para alinhar com TrainingPeaks (valores ~10-15% maiores)
-            rtss = duration_h * (if_ ** 2) * 100.0 * 1.15
-
-    # Pace-based swimming (sTSS) – usa avg_speed (m/s) quando disponível
-    stss = 0.0
-    if avg_speed > 0 and category == 'swimming':
-        threshold_sec_per_100m = _parse_mmss_to_seconds(config.get('swim_pace_threshold', '2:30'), default_seconds=150)
-        threshold_speed = 100.0 / float(threshold_sec_per_100m)  # m/s
-        if threshold_speed > 0:
-            if_ = avg_speed / threshold_speed
-            # Natação: dividir por 3.5 para refletir menor impacto cardiovascular
-            stss = (duration_h * (if_ ** 2) * 100.0) / 3.5
-
-    # HR-based (hrTSS) - Método TrainingPeaks
-    # Fórmula: hrTSS = duration_hours × HRR × 0.64 × e^(1.92 × HRR) × 100
-    # Onde HRR = (avgHR - hrRest) / (LTHR - hrRest)
-    hrtss = 0.0
+    # Location para forçar reload
+    dcc.Location(id='url', refresh=False),
     
-    # Tentar múltiplos campos de FC do Garmin
-    avg_hr = (activity.get('averageHR') or 
-              activity.get('avgHR') or 
-              activity.get('avgHr') or
-              activity.get('averageHeartRate') or
-              activity.get('avgHeartRate'))
+    # Botão de toggle modo escuro
+    html.Button(
+        id='dark-mode-toggle',
+        children='🌙 Modo Escuro',
+        className='dark-mode-toggle',
+        n_clicks=0
+    ),
     
-    avg_hr = float(avg_hr or 0)
-    hr_rest = float(config.get('hr_rest', 50) or 50)
-    hr_threshold = float(config.get('hr_threshold', 0) or 0)
+    # Helper de atalhos (sempre visível)
+    html.Div([
+        html.Div([
+            "💡 ",
+            html.Kbd("Ctrl+D"),
+            " Modo Escuro | ",
+            html.Kbd("Ctrl+K"),
+            " Atalhos"
+        ], style={
+            'position': 'fixed',
+            'bottom': '20px',
+            'left': '20px',
+            'zIndex': '9998',
+            'background': 'rgba(45, 45, 49, 0.9)',
+            'color': 'white',
+            'padding': '8px 16px',
+            'borderRadius': '8px',
+            'fontSize': '0.75rem',
+            'boxShadow': '0 4px 16px rgba(0,0,0,0.3)'
+        })
+    ]),
     
-    if avg_hr > 0 and hr_threshold > hr_rest and avg_hr >= hr_rest:
-        # Usar LTHR (hr_threshold) como referência
-        hrr = (avg_hr - hr_rest) / (hr_threshold - hr_rest)
-        hrr = max(0.0, min(2.0, hrr))  # Limitar entre 0 e 2
-        
-        import math
-        # Fórmula TrainingPeaks: duração em horas × HRR × coeficientes
-        raw_hrtss = duration_h * hrr * 0.64 * math.exp(1.92 * hrr) * 100.0
-        
-        # Para natação, aplicar fator de correção (FC é mais baixa na água)
-        if category == 'swimming':
-            hrtss = raw_hrtss / 3.5  # Mesma correção que para pace
-        else:
-            hrtss = raw_hrtss
+    dbc.Container([
+    
+    # Header com informações úteis
+    dbc.Row([
+        dbc.Col([
+            html.Div([
+                html.Div([
+                    html.H1("💪 Fitness Metrics Dashboard", className="mb-2", style={'fontWeight': '800', 'display': 'inline-block'}),
+                    html.Span([
+                        html.Span("ℹ️", className="tooltip-icon", style={
+                            'display': 'inline-flex',
+                            'alignItems': 'center',
+                            'justifyContent': 'center',
+                            'width': '22px',
+                            'height': '22px',
+                            'borderRadius': '50%',
+                            'background': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                            'color': 'white',
+                            'fontSize': '12px',
+                            'fontWeight': 'bold',
+                            'marginLeft': '10px',
+                            'cursor': 'help'
+                        }),
+                        html.Span([
+                            html.Strong("CTL (Chronic Training Load):"), " Carga de treino acumulada nos últimos 42 dias. Representa sua forma física atual.",
+                            html.Br(), html.Br(),
+                            html.Strong("ATL (Acute Training Load):"), " Carga de treino dos últimos 7 dias. Indica o cansaço recente.",
+                            html.Br(), html.Br(),
+                            html.Strong("TSB (Training Stress Balance):"), " CTL - ATL. Valores negativos = fatigado, positivos = descansado.",
+                            html.Br(), html.Br(),
+                            html.Strong("TSS (Training Stress Score):"), " Pontuação de estresse do treino baseado em intensidade e duração."
+                        ], style={
+                            'visibility': 'hidden',
+                            'width': '320px',
+                            'backgroundColor': '#2D2D31',
+                            'color': '#FFFFFF',
+                            'textAlign': 'left',
+                            'borderRadius': '8px',
+                            'padding': '16px',
+                            'position': 'absolute',
+                            'zIndex': '10000',
+                            'bottom': '130%',
+                            'left': '50%',
+                            'marginLeft': '-160px',
+                            'opacity': '0',
+                            'transition': 'opacity 0.3s',
+                            'boxShadow': '0 4px 16px rgba(0,0,0,0.4)',
+                            'fontSize': '0.85rem',
+                            'lineHeight': '1.5'
+                        }, className='tooltip-text')
+                    ], style={'position': 'relative', 'display': 'inline-block'}, className='info-tooltip')
+                ]),
+                html.P([
+                    "Análise completa de treinamento | ",
+                    html.Span(f"📅 {datetime.now().strftime('%d/%m/%Y')}", className="me-3"),
+                    html.Span("🔥 Sistema de Conquistas", className="me-3"),
+                    html.Span("📊 Exportação CSV", className="me-3"),
+                    html.Span("🔮 Previsões IA", className="me-3"),
+                    html.Span(id='last-update-badge', children=[
+                        "🔄 Última atualização: Carregando..."
+                    ], className="last-update-badge")
+                ], className="text-muted", style={'fontSize': '0.9rem'})
+            ], className="text-center py-3")
+        ])
+    ], className="mb-3"),
+    
+    html.Hr(className="mb-4"),
+    
+    # Navegação por abas
+    dbc.Tabs([
+        dbc.Tab(label="📊 Dashboard", tab_id="dashboard"),
+        dbc.Tab(label="📅 Calendário", tab_id="calendar"),
+        dbc.Tab(label="🎯 Metas", tab_id="goals"),
+        dbc.Tab(label="⚙️ Configuração", tab_id="config")
+    ], id="tabs", active_tab="dashboard"),
+    
+    # Conteúdo das abas
+    html.Div(id="tab-content", className="mt-4")
+    ], fluid=False, style={'maxWidth': '1400px'})
+])
 
-    # Escolher melhor estimativa para preencher `tss`
-    method = 'none'
-    chosen = 0.0
-    if tss > 0:
-        chosen = tss
-        method = 'power'
-    elif rtss > 0:
-        chosen = rtss
-        method = 'pace_run'
-    elif stss > 0:
-        chosen = stss
-        method = 'pace_swim'
-    elif hrtss > 0:
-        chosen = hrtss
-        method = 'hr'
+# Callback para trocar conteúdo das abas
+@app.callback(
+    Output("tab-content", "children"),
+    Input("tabs", "active_tab")
+)
+def render_tab_content(active_tab):
+    if active_tab == "dashboard":
+        return render_dashboard()
+    elif active_tab == "calendar":
+        return render_calendar()
+    elif active_tab == "goals":
+        return render_goals()
+    elif active_tab == "config":
+        return render_config()
+    return html.P("Selecione uma aba.")
 
-    return {
-        'tss': float(activity.get('tss', 0) or 0) if float(activity.get('tss', 0) or 0) > 0 else float(chosen),
-        'rtss': float(activity.get('rtss', 0) or 0) if float(activity.get('rtss', 0) or 0) > 0 else float(rtss),
-        'stss': float(activity.get('stss', 0) or 0) if float(activity.get('stss', 0) or 0) > 0 else float(stss),
-        'hrtss': float(activity.get('hrtss', 0) or 0) if float(activity.get('hrtss', 0) or 0) > 0 else float(hrtss),
-        'tss_method': activity.get('tss_method') or method
-    }
+# Callbacks para exportação de dados
+@app.callback(
+    Output("download-metrics", "data"),
+    Input("btn-export-metrics", "n_clicks"),
+    prevent_initial_call=True
+)
+def export_metrics_csv(n_clicks):
+    """Exporta métricas para CSV"""
+    if n_clicks:
+        metrics = load_metrics()
+        csv_data, _ = export_to_csv(metrics, [])
+        if csv_data:
+            return dict(content=csv_data, filename=f"fitness_metrics_{datetime.now().strftime('%Y%m%d')}.csv")
+    return None
 
-def calculate_modality_progress(activities):
-    """Calcula progresso por modalidade agrupado por semana (42 dias)"""
-    if not activities:
-        return {}
+@app.callback(
+    Output("download-workouts", "data"),
+    Input("btn-export-workouts", "n_clicks"),
+    prevent_initial_call=True
+)
+def export_workouts_csv(n_clicks):
+    """Exporta atividades para CSV"""
+    if n_clicks:
+        workouts = load_workouts()
+        _, csv_data = export_to_csv([], workouts)
+        if csv_data:
+            return dict(content=csv_data, filename=f"workouts_{datetime.now().strftime('%Y%m%d')}.csv")
+    return None
 
-    # Usar a data da atividade mais recente como referência
-    if activities:
-        most_recent = max(activities, key=lambda x: datetime.strptime(x.get('startTimeLocal', x.get('startTime', '1900-01-01')), "%Y-%m-%d %H:%M:%S"))
-        now = datetime.strptime(most_recent.get('startTimeLocal', most_recent.get('startTime', '1900-01-01')), "%Y-%m-%d %H:%M:%S")
-    else:
-        now = datetime.now()
-
-    start_date = now - timedelta(days=42)
-
-    # Inicializar estrutura de dados
-    modalities = ['cycling', 'running', 'swimming', 'strength']
-    modality_data = {mod: [] for mod in modalities}
-
-    # Agrupar atividades por modalidade e semana
-    for activity in activities:
+# Função auxiliar para calcular resumo semanal
+def calculate_weekly_summary():
+    """Calcula resumo da semana atual (segunda a domingo)"""
+    workouts = load_workouts()
+    config = load_config()
+    
+    # Definir semana atual
+    now = datetime.now()
+    days_since_monday = now.isoweekday() - 1  # 0=segunda, 6=domingo
+    week_start = (now - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+    week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    
+    total_hours = 0.0
+    total_tss = 0.0
+    total_activities = 0
+    total_distance = 0.0
+    
+    for workout in workouts:
         try:
-            activity_date = datetime.strptime(
-                activity.get('startTimeLocal', activity.get('startTime', '1900-01-01')),
-                "%Y-%m-%d %H:%M:%S"
-            )
-
-            # Pular atividades fora do período de 42 dias
-            if activity_date < start_date:
+            start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
+            if not start_time:
                 continue
-
-            # Categorizar atividade
-            activity_type = _activity_category(activity)
-            if activity_type not in modalities:
-                continue
-
-            # Calcular semana (0-5, onde 0 é a semana mais antiga)
-            days_diff = (activity_date - start_date).days
-            week_num = days_diff // 7
-
-            # Dados da atividade
-            distance = float(activity.get('distance', 0) or 0) / 1000  # km
-            tss = float(activity.get('tss', 0) or 0)
-            duration = float(activity.get('duration', 0) or 0) / 3600  # horas
-
-            # Adicionar à modalidade correspondente
-            if week_num < 6:  # Apenas 6 semanas (42 dias)
-                modality_data[activity_type].append({
-                    'week': week_num,
-                    'distance': distance,
-                    'tss': tss,
-                    'duration': duration,
-                    'date': activity_date.date()
-                })
-
+                
+            activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+            
+            if week_start <= activity_date <= week_end:
+                duration_h = float(workout.get('duration', 0) or 0) / 3600
+                tss = float(workout.get('tss', 0) or 0)
+                distance = float(workout.get('distance', 0) or 0) / 1000
+                name = workout.get('activityName', 'N/A')[:40]
+                
+                total_hours += duration_h
+                total_tss += tss
+                total_activities += 1
+                total_distance += distance
         except Exception as e:
             continue
-
-    # Agregar por semana para cada modalidade
-    result = {}
-    for modality in modalities:
-        weekly_data = {}
-        for activity in modality_data[modality]:
-            week = activity['week']
-            if week not in weekly_data:
-                weekly_data[week] = {
-                    'distance': 0,
-                    'tss': 0,
-                    'duration': 0,
-                    'activities': 0,
-                    'week_start': start_date + timedelta(days=week*7)
-                }
-            weekly_data[week]['distance'] += activity['distance']
-            weekly_data[week]['tss'] += activity['tss']
-            weekly_data[week]['duration'] += activity['duration']
-            weekly_data[week]['activities'] += 1
-
-        # Converter para lista ordenada por semana
-        result[modality] = []
-        for week in range(6):
-            if week in weekly_data:
-                result[modality].append(weekly_data[week])
-            else:
-                result[modality].append({
-                    'distance': 0,
-                    'tss': 0,
-                    'duration': 0,
-                    'activities': 0,
-                    'week_start': start_date + timedelta(days=week*7)
-                })
-
-    return result
-
-def display_modality_progress(modality_progress, modality_key, modality_name):
-    """Exibe o progresso de uma modalidade com gráficos Plotly modernos"""
-    import pandas as pd
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-
-    data = modality_progress.get(modality_key, [])
-
-    if not data:
-        st.info(f"Nenhum dado encontrado para {modality_name}")
-        return
-
-    # Criar DataFrame para exibição
-    df_data = []
-    for i, week_data in enumerate(data):
-        week_start = week_data['week_start']
-        week_end = week_start + timedelta(days=6)
-        df_data.append({
-            'Semana': f'{i+1}',
-            'Período': f'{week_start.strftime("%d/%m")} - {week_end.strftime("%d/%m")}',
-            'Distância (km)': f"{week_data['distance']:.1f}",
-            'TSS': f"{week_data['tss']:.0f}",
-            'Horas': format_hours_decimal(week_data['duration']),
-            'Atividades': week_data['activities']
-        })
-
-    df = pd.DataFrame(df_data)
-
-    # Métricas gerais com cards modernos
-    total_distance = sum(week_data['distance'] for week_data in data)
-    total_tss = sum(week_data['tss'] for week_data in data)
-    total_hours = sum(week_data['duration'] for week_data in data)
-    total_activities = sum(week_data['activities'] for week_data in data)
-
-    # Cards de métricas com design moderno
-    st.markdown(f"""
-    <div class='row g-3 mb-4'>
-        <div class='col-12 col-md-3'>
-            <div class='card border-primary shadow-sm'>
-                <div class='card-body text-center p-3'>
-                    <div class='text-primary mb-1'><i class='fas fa-route'></i></div>
-                    <div class='h5 mb-0 text-primary'>{total_distance:.1f}</div>
-                    <small class='text-muted'>Distância Total (km)</small>
-                </div>
-            </div>
-        </div>
-        <div class='col-12 col-md-3'>
-            <div class='card border-success shadow-sm'>
-                <div class='card-body text-center p-3'>
-                    <div class='text-success mb-1'><i class='fas fa-bolt'></i></div>
-                    <div class='h5 mb-0 text-success'>{total_tss:.0f}</div>
-                    <small class='text-muted'>TSS Total</small>
-                </div>
-            </div>
-        </div>
-        <div class='col-12 col-md-3'>
-            <div class='card border-info shadow-sm'>
-                <div class='card-body text-center p-3'>
-                    <div class='text-info mb-1'><i class='fas fa-clock'></i></div>
-                    <div class='h5 mb-0 text-info'>{format_hours_decimal(total_hours)}</div>
-                    <small class='text-muted'>Horas Totais</small>
-                </div>
-            </div>
-        </div>
-        <div class='col-12 col-md-3'>
-            <div class='card border-warning shadow-sm'>
-                <div class='card-body text-center p-3'>
-                    <div class='text-warning mb-1'><i class='fas fa-calendar-check'></i></div>
-                    <div class='h5 mb-0 text-warning'>{total_activities}</div>
-                    <small class='text-muted'>Atividades</small>
-                </div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Tabela de progresso semanal com design melhorado
-    st.markdown("#### 📅 Progresso Semanal Detalhado")
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            'Semana': st.column_config.TextColumn('Semana', width='small'),
-            'Período': st.column_config.TextColumn('Período', width='medium'),
-            'Distância (km)': st.column_config.TextColumn('Distância (km)', width='medium'),
-            'TSS': st.column_config.TextColumn('TSS', width='small'),
-            'Horas': st.column_config.TextColumn('Horas', width='small'),
-            'Atividades': st.column_config.TextColumn('Atividades', width='small')
-        }
-    )
-
-    # Gráfico moderno com subplots
-    st.markdown("#### 📈 Evolução Semanal Completa")
-
-    # Preparar dados
-    semanas = [f'S{i+1}' for i in range(len(data))]
-    distancia = [week['distance'] for week in data]
-    tss = [week['tss'] for week in data]
-    horas = [week['duration'] for week in data]
-    atividades = [week['activities'] for week in data]
-
-    # Criar subplot com 2x2
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Distância por Semana', 'TSS por Semana', 'Horas por Semana', 'Atividades por Semana'),
-        specs=[[{"secondary_y": False}, {"secondary_y": False}],
-               [{"secondary_y": False}, {"secondary_y": False}]]
-    )
-
-    # Cores temáticas por modalidade - PADRONIZADAS
-    cores_modalidade = {
-        'swimming': {'primary': '#007bff', 'secondary': '#cce5ff'},  # Azul - Natação
-        'cycling': {'primary': '#28a745', 'secondary': '#d4edda'},   # Verde - Ciclismo
-        'running': {'primary': '#fd7e14', 'secondary': '#ffe5d0'},   # Laranja - Corrida
-        'strength': {'primary': '#6f42c1', 'secondary': '#e7d9ff'}   # Roxo - Musculação
-    }
-
-    cores = cores_modalidade.get(modality_key, {'primary': '#666', 'secondary': '#ccc'})
-
-    # Gráfico 1: Distância
-    fig.add_trace(
-        go.Bar(
-            x=semanas,
-            y=distancia,
-            name='Distância',
-            marker_color=cores['primary'],
-            marker_line_color=cores['secondary'],
-            marker_line_width=1,
-            hovertemplate='<b>%{x}</b><br>Distância: %{y:.1f} km<extra></extra>'
-        ),
-        row=1, col=1
-    )
-
-    # Gráfico 2: TSS
-    fig.add_trace(
-        go.Scatter(
-            x=semanas,
-            y=tss,
-            mode='lines+markers',
-            name='TSS',
-            line=dict(color=cores['primary'], width=3),
-            marker=dict(size=8, color=cores['primary'], symbol='circle'),
-            hovertemplate='<b>%{x}</b><br>TSS: %{y:.0f}<extra></extra>'
-        ),
-        row=1, col=2
-    )
-
-    # Gráfico 3: Horas
-    fig.add_trace(
-        go.Scatter(
-            x=semanas,
-            y=horas,
-            mode='lines+markers',
-            name='Horas',
-            line=dict(color=cores['primary'], width=3, dash='dot'),
-            marker=dict(size=8, color=cores['primary'], symbol='square'),
-            hovertemplate='<b>%{x}</b><br>Horas: %{customdata}<extra></extra>',
-            customdata=[format_hours_decimal(h) for h in horas]
-        ),
-        row=2, col=1
-    )
-
-    # Gráfico 4: Atividades
-    fig.add_trace(
-        go.Bar(
-            x=semanas,
-            y=atividades,
-            name='Atividades',
-            marker_color=cores['secondary'],
-            marker_line_color=cores['primary'],
-            marker_line_width=1,
-            hovertemplate='<b>%{x}</b><br>Atividades: %{y}<extra></extra>'
-        ),
-        row=2, col=2
-    )
-
-    # Configurar layout
-    fig.update_layout(
-        height=600,
-        showlegend=False,
-        font=dict(family='Inter, -apple-system, sans-serif', size=11),
-        plot_bgcolor='rgba(248,249,250,0.5)',
-        paper_bgcolor='white',
-        margin=dict(l=40, r=40, t=60, b=40)
-    )
-
-    # Configurar eixos
-    fig.update_xaxes(showgrid=False, row=1, col=1)
-    fig.update_yaxes(title_text='Distância (km)', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=1, col=1)
-
-    fig.update_xaxes(showgrid=False, row=1, col=2)
-    fig.update_yaxes(title_text='TSS', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=1, col=2)
-
-    fig.update_xaxes(showgrid=False, row=2, col=1)
-    fig.update_yaxes(title_text='Horas', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=2, col=1)
-
-    fig.update_xaxes(showgrid=False, row=2, col=2)
-    fig.update_yaxes(title_text='Atividades', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=2, col=2)
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Gráfico de tendência consolidado
-    st.markdown("#### 📊 Tendência Consolidada (42 dias)")
-
-    # Calcular médias móveis para suavizar tendências
-    if len(data) >= 3:
-        distancia_ma = np.convolve(distancia, np.ones(3)/3, mode='valid').tolist()
-        tss_ma = np.convolve(tss, np.ones(3)/3, mode='valid').tolist()
-        semanas_ma = semanas[1:-1]  # Ajustar índices para média móvel
-    else:
-        distancia_ma = distancia
-        tss_ma = tss
-        semanas_ma = semanas
-
-    # Gráfico de tendência
-    fig_tendencia = go.Figure()
-
-    # Área preenchida para distância
-    fig_tendencia.add_trace(
-        go.Scatter(
-            x=semanas,
-            y=distancia,
-            mode='lines+markers',
-            name='Distância (km)',
-            line=dict(color=cores['primary'], width=3),
-            marker=dict(size=6, color=cores['primary']),
-            fill='tozeroy',
-            fillcolor='rgba(25, 118, 210, 0.2)',  # Azul com transparência
-            hovertemplate='<b>Distância</b><br>Semana %{x}<br>%{y:.1f} km<extra></extra>'
-        )
-    )
-
-    # Linha para TSS
-    fig_tendencia.add_trace(
-        go.Scatter(
-            x=semanas,
-            y=tss,
-            mode='lines+markers',
-            name='TSS',
-            line=dict(color=cores['secondary'], width=3, dash='dash'),
-            marker=dict(size=6, color=cores['secondary'], symbol='diamond'),
-            yaxis='y2',
-            hovertemplate='<b>TSS</b><br>Semana %{x}<br>%{y:.0f}<extra></extra>'
-        )
-    )
-
-    # Configurar layout com eixo duplo
-    fig_tendencia.update_layout(
-        title=f'Tendência de Progresso - {modality_name}',
-        height=400,
-        font=dict(family='Inter, -apple-system, sans-serif', size=12),
-        plot_bgcolor='rgba(248,249,250,0.5)',
-        paper_bgcolor='white',
-        hovermode='x unified',
-        legend=dict(
-            orientation='h',
-            yanchor='bottom',
-            y=1.02,
-            xanchor='center',
-            x=0.5
-        ),
-        margin=dict(l=50, r=50, t=80, b=50),
-        yaxis=dict(
-            title='Distância (km)',
-            tickfont=dict(color=cores['primary'])
-        ),
-        yaxis2=dict(
-            title='TSS',
-            tickfont=dict(color=cores['secondary']),
-            anchor='x',
-            overlaying='y',
-            side='right'
-        )
-    )
-
-    fig_tendencia.update_xaxes(showgrid=False)
-    fig_tendencia.update_yaxes(showgrid=True, gridcolor='rgba(0,0,0,0.1)')
-
-    st.plotly_chart(fig_tendencia, use_container_width=True)
-
-def calculate_goals_progress(activities, config):
-    """Calcula progresso das metas baseado nas atividades"""
-    if not activities:
-        return {
-            'weekly': {'distance': 0, 'tss': 0, 'hours': 0, 'activities': 0},
-            'monthly': {'distance': 0, 'tss': 0, 'hours': 0, 'activities': 0},
-            'current_ctl': 0,
-            'current_atl': 0
-        }
-
-    now = datetime.now()
-    week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)  # Monday at 00:00
-    month_start = now.replace(day=1)
-
-    weekly_activities = []
-    monthly_activities = []
-
-    for activity in activities:
-        try:
-            activity_date = datetime.strptime(
-                activity.get('startTimeLocal', activity.get('startTime', '1900-01-01')),
-                "%Y-%m-%d %H:%M:%S"
-            )
-
-            if activity_date >= week_start:
-                weekly_activities.append(activity)
-            if activity_date >= month_start:
-                monthly_activities.append(activity)
-        except:
-            continue
-
-    def calculate_metrics(activity_list):
-        total_distance = sum(float(a.get('distance', 0) or 0) / 1000 for a in activity_list)  # km
-        total_tss = sum(float(a.get('tss', 0) or 0) for a in activity_list)
-        total_hours = sum(float(a.get('duration', 0) or 0) / 3600 for a in activity_list)
-        total_activities = len(activity_list)
-        return {
-            'distance': total_distance,
-            'tss': total_tss,
-            'hours': total_hours,
-            'activities': total_activities
-        }
-
-    weekly_metrics = calculate_metrics(weekly_activities)
-    monthly_metrics = calculate_metrics(monthly_activities)
-
-    # Calcular CTL e ATL atuais (último valor disponível)
-    metrics = load_metrics()
-    current_ctl = metrics[-1]['ctl'] if metrics else 0
-    current_atl = metrics[-1]['atl'] if metrics else 0
-
+    
+    # Formatar período
+    week_str = f"{week_start.strftime('%d %b')} - {week_end.strftime('%d %b')}"
+    
+    # Formatar horas como hh:mm:ss
+    hours_formatted = format_hours_to_hms(total_hours)
+    
     return {
-        'weekly': weekly_metrics,
-        'monthly': monthly_metrics,
-        'current_ctl': current_ctl,
-        'current_atl': current_atl
+        'period': week_str,
+        'hours': total_hours,
+        'hours_formatted': hours_formatted,
+        'tss': total_tss,
+        'activities': total_activities,
+        'distance': total_distance
     }
 
-def calculate_fitness_metrics(activities, config, start_date, end_date):
-    """Calcula métricas de fitness (CTL, ATL, TSB) baseadas nas atividades"""
-    # Agrupar TRIMP por data
-    daily_loads = {}
-    for activity in activities:
-        start_time = activity.get('startTimeLocal', '')
-        if start_time:
-            try:
-                # startTimeLocal pode ser "2025-12-21 11:43:55" ou com Z
-                if 'T' not in start_time:
-                    start_time = start_time.replace(' ', 'T')
-                if not start_time.endswith('Z'):
-                    start_time += 'Z'
-                date = datetime.fromisoformat(start_time.replace('Z', '+00:00')).date()
-                trimp = calculate_trimp(activity, config)
-                daily_loads[date] = daily_loads.get(date, 0) + trimp
-            except ValueError as e:
-                print(f"Erro ao parsear data {start_time}: {e}")
-                continue
+# Função para calcular alertas inteligentes
+def calculate_smart_alerts(metrics):
+    """Gera alertas baseados nas métricas de treinamento"""
+    alerts = []
     
-    # Lista de dias
-    days = []
-    current_date = start_date
-    while current_date <= end_date:
-        days.append(current_date)
-        current_date += timedelta(days=1)
+    if len(metrics) < 3:
+        return alerts
     
-    # Calcular CTL, ATL
-    ctl = 0
-    atl = 0
-    metrics = []
-    for date in days:
-        load = daily_loads.get(date, 0)
-        ctl = ctl + (load - ctl) / 42
-        atl = atl + (load - atl) / 7
-        tsb = ctl - atl
-        metrics.append({
-            'date': date.isoformat(),
-            'daily_load': load,
-            'ctl': ctl,
-            'atl': atl,
-            'tsb': tsb
-        })
-    return metrics
-    """Calcula métricas de fitness (CTL, ATL, TSB) baseado em atividades"""
-    daily_loads = {}
-
-    def _activity_date(a: dict):
-        from datetime import datetime as dt
-        if a.get('startTimeLocal'):
-            try:
-                return dt.strptime(a['startTimeLocal'], '%Y-%m-%d %H:%M:%S').date()
-            except Exception:
-                pass
-        if a.get('startTimeGMT'):
-            try:
-                return dt.strptime(a['startTimeGMT'], '%Y-%m-%d %H:%M:%S').date()
-            except Exception:
-                pass
-        if a.get('startTimeInSeconds'):
-            try:
-                return dt.fromtimestamp(a['startTimeInSeconds']).date()
-            except Exception:
-                pass
-        return None
-
-    for activity in activities:
-        date = _activity_date(activity)
-        if not date:
-            continue
-        trimp = calculate_trimp(activity, config)
-        daily_loads[date] = daily_loads.get(date, 0) + trimp
+    last_metric = metrics[-1]
+    last_3_metrics = metrics[-3:]
+    last_14_metrics = metrics[-14:] if len(metrics) >= 14 else metrics
     
-    days = []
-    current_date = start_date
-    while current_date <= end_date:
-        days.append(current_date)
-        current_date += timedelta(days=1)
-    
-    ctl = 0
-    atl = 0
-    metrics = []
-    for date in days:
-        load = daily_loads.get(date, 0)
-        ctl = ctl + (load - ctl) / 42
-        atl = atl + (load - atl) / 7
-        tsb = ctl - atl
-        metrics.append({
-            'date': date.isoformat(),
-            'daily_load': load,
-            'ctl': ctl,
-            'atl': atl,
-            'tsb': tsb
+    # Alerta 1: Risco de Overtraining (ATL > CTL por 3+ dias)
+    overtraining_days = sum(1 for m in last_3_metrics if m['atl'] > m['ctl'])
+    if overtraining_days >= 3:
+        alerts.append({
+            'icon': '🚨',
+            'title': 'Risco de Overtraining',
+            'message': f'Fadiga maior que forma por {overtraining_days} dias consecutivos',
+            'action': 'Considere reduzir intensidade ou volume dos treinos',
+            'color': 'danger',
+            'priority': 1
         })
     
-    return metrics
+    # Alerta 2: Necessita Descanso (TSB muito negativo)
+    if last_metric['tsb'] < -15:
+        alerts.append({
+            'icon': '😴',
+            'title': 'Necessita Descanso',
+            'message': f'TSB está em {last_metric["tsb"]:.1f}, muito abaixo do ideal',
+            'action': 'Programe 2-3 dias de descanso ou treinos leves',
+            'color': 'warning',
+            'priority': 2
+        })
+    
+    # Alerta 3: Pronto para Intensidade
+    if last_metric['tsb'] > 15 and last_metric['ctl'] >= 40:
+        alerts.append({
+            'icon': '⚡',
+            'title': 'Pronto para Intensidade',
+            'message': f'TSB em {last_metric["tsb"]:.1f} - você está bem descansado',
+            'action': 'Momento ideal para treinos de alta intensidade',
+            'color': 'success',
+            'priority': 3
+        })
+    
+    # Alerta 4: Forma em Declínio
+    if len(last_14_metrics) >= 14:
+        ctl_14_days_ago = last_14_metrics[0]['ctl']
+        ctl_decline = ((last_metric['ctl'] - ctl_14_days_ago) / ctl_14_days_ago * 100) if ctl_14_days_ago > 0 else 0
+        if ctl_decline < -10:
+            alerts.append({
+                'icon': '📉',
+                'title': 'Forma em Declínio',
+                'message': f'CTL caiu {abs(ctl_decline):.1f}% nas últimas 2 semanas',
+                'action': 'Aumente gradualmente volume ou intensidade dos treinos',
+                'color': 'info',
+                'priority': 4
+            })
+    
+    # Alerta 5: Manutenção de Forma
+    if -5 <= last_metric['tsb'] <= 5 and last_metric['ctl'] >= 45:
+        alerts.append({
+            'icon': '✅',
+            'title': 'Zona Ideal de Treinamento',
+            'message': f'CTL {last_metric["ctl"]:.1f} e TSB {last_metric["tsb"]:.1f} estão perfeitos',
+            'action': 'Continue com o plano atual de treinamento',
+            'color': 'success',
+            'priority': 5
+        })
+    
+    # Ordenar por prioridade
+    alerts.sort(key=lambda x: x['priority'])
+    return alerts[:3]  # Retornar apenas os 3 mais importantes
 
-def fetch_garmin_data(email, password, config):
-    """Busca dados do Garmin Connect com lógica inteligente de atualização"""
-    try:
-        from garminconnect import Garmin
-        client = Garmin(email, password)
-        client.login()
-
-        end_date = datetime.now().date()
-
-        # Carregar histórico salvo
-        old_activities = load_workouts()
-
-        if not old_activities:
-            # Se não há dados armazenados, buscar os últimos 42 dias
-            start_date = end_date - timedelta(days=42)
-            fetch_start_date = start_date
-            print(f"🔄 Nenhum dado armazenado. Buscando últimos 42 dias: {start_date} até {end_date}")
-        else:
-            # Se há dados, pegar o último dia mais atualizado, subtrair 1 dia e buscar até hoje
-            # Encontrar a data mais recente dos dados armazenados
-            latest_dates = []
-            for a in old_activities:
-                start_time = a.get('startTimeLocal', a.get('startTime', ''))
-                if start_time:
-                    try:
-                        if 'T' in start_time:
-                            date_obj = datetime.strptime(start_time.split('T')[0], '%Y-%m-%d').date()
-                        else:
-                            date_obj = datetime.strptime(start_time.split(' ')[0], '%Y-%m-%d').date()
-                        latest_dates.append(date_obj)
-                    except:
-                        continue
-
-            if latest_dates:
-                most_recent_date = max(latest_dates)
-                # Subtrair 1 dia da data mais recente
-                fetch_start_date = most_recent_date - timedelta(days=1)
-                print(f"🔄 Dados existentes até {most_recent_date}. Buscando de {fetch_start_date} até {end_date}")
-            else:
-                # Fallback para 42 dias se não conseguir parsear datas
-                fetch_start_date = end_date - timedelta(days=42)
-                print(f"⚠️ Não foi possível determinar data dos dados existentes. Buscando últimos 42 dias.")
-
-        # Buscar atividades do período determinado
-        if fetch_start_date <= end_date:
-            new_activities = client.get_activities_by_date(
-                fetch_start_date.isoformat(),
-                end_date.isoformat()
-            )
-            print(f"📊 Encontradas {len(new_activities)} atividades no Garmin")
-        else:
-            new_activities = []
-            print("📊 Nenhuma nova data para buscar")
-
-        # Unir atividades antigas com novas, sobrescrevendo duplicatas
-        # Usar activityId ou startTimeLocal como chave única
-        activities_dict = {}
-
-        # Primeiro, adicionar atividades antigas
-        for a in old_activities:
-            key = a.get('activityId') or a.get('activityUUID') or a.get('startTimeLocal') or a.get('startTime')
-            if key:
-                activities_dict[key] = a
-
-        # Depois, adicionar/sobrescrever com atividades novas
-        for a in new_activities:
-            key = a.get('activityId') or a.get('activityUUID') or a.get('startTimeLocal') or a.get('startTime')
-            if key:
-                activities_dict[key] = a
-
-        # Converter de volta para lista
-        all_activities = list(activities_dict.values())
-        print(f"📊 Total de atividades únicas após merge: {len(all_activities)}")
-
-        # Enriquecer atividades com TSS variants (sempre recalcular)
-        enriched_activities = []
-        for a in all_activities:
-            a2 = dict(a)
-            tss_data = compute_tss_variants(a2, config)
-            # SEMPRE recalcular para garantir que usa a config mais recente
-            for k, v in tss_data.items():
-                a2[k] = v
-            enriched_activities.append(a2)
-
-        # Salvar TODAS as atividades (não filtrar por 42 dias aqui)
-        save_workouts(enriched_activities)
-
-        # Para métricas do Dashboard, usar apenas os últimos 42 dias
-        dashboard_cutoff = end_date - timedelta(days=42)
-        dashboard_activities = []
-        for a in enriched_activities:
-            start_time = a.get('startTimeLocal', a.get('startTime', ''))
-            if start_time:
-                try:
-                    if 'T' in start_time:
-                        activity_date = datetime.strptime(start_time.split('T')[0], '%Y-%m-%d').date()
-                    else:
-                        activity_date = datetime.strptime(start_time.split(' ')[0], '%Y-%m-%d').date()
-
-                    if activity_date >= dashboard_cutoff:
-                        dashboard_activities.append(a)
-                except:
-                    # Se não conseguir parsear, incluir na dúvida
-                    dashboard_activities.append(a)
-
-        print(f"📊 Atividades para Dashboard (últimos 42 dias): {len(dashboard_activities)}")
-
-        # Calcular métricas apenas com dados dos últimos 42 dias
-        metrics = calculate_fitness_metrics(dashboard_activities, config, dashboard_cutoff, end_date)
-        save_metrics(metrics)
-
-        new_count = len(new_activities)
-        total_count = len(enriched_activities)
-        dashboard_count = len(dashboard_activities)
-
-        return True, f"✅ Dados atualizados! {new_count} novas atividades, {total_count} total armazenadas, {dashboard_count} para Dashboard (42 dias)."
-
-    except ImportError:
-        return False, "❌ Erro: garminconnect não instalado. Instale com: pip install garminconnect"
-    except Exception as e:
-        return False, f"❌ Erro ao buscar dados: {str(e)}"
-
-# Inicializar session state
-if 'update_status' not in st.session_state:
-    st.session_state.update_status = None
-
-# Sidebar - Navegação
-st.sidebar.title("📱 Fitness Metrics")
-page = st.sidebar.radio(
-    "Navegação",
-    ["📊 Dashboard", "📅 Calendário", "🎯 Metas", "⚙️ Configuração"]
-)
-
-# PAGE 1: DASHBOARD
-if page == "📊 Dashboard":
-    st.title("📊 Dashboard de Fitness")
-
-    metrics = load_metrics_cached()
-
-    if not metrics:
-        st.warning("⚠️ Nenhum dado disponível. Vá para 'Atualizar Dados' para sincronizar com Garmin Connect.")
-    else:
-        last_metric = metrics[-1]
-        
-        # Calcular variação em relação a 7 dias atrás
-        prev_metric = metrics[-8] if len(metrics) >= 8 else metrics[0]
-        
-        ctl_change = ((last_metric['ctl'] - prev_metric['ctl']) / prev_metric['ctl'] * 100) if prev_metric['ctl'] > 0 else 0
-        atl_change = ((last_metric['atl'] - prev_metric['atl']) / prev_metric['atl'] * 100) if prev_metric['atl'] > 0 else 0
-        tsb_change = ((last_metric['tsb'] - prev_metric['tsb']) / abs(prev_metric['tsb']) * 100) if prev_metric['tsb'] != 0 else 0
-        
-        # Símbolos de tendência
-        ctl_arrow = "📈" if ctl_change > 0 else "📉" if ctl_change < 0 else "➡️"
-        atl_arrow = "📈" if atl_change > 0 else "📉" if atl_change < 0 else "➡️"
-        tsb_arrow = "📈" if tsb_change > 0 else "📉" if tsb_change < 0 else "➡️"
-        
-        # ============ STATUS ATUAL: ONDE VOCÊ ESTÁ ============
-        st.markdown("## 🎯 Status Atual: Onde Você Está")
-        st.markdown("*Seu estado de forma física atual e tendências recentes*")
-        
-        # ============ CARDS DE MÉTRICAS PRINCIPAIS NO TOPO ============
-        st.markdown(f"""
-        <div class='container' style='margin:30px auto 40px auto;max-width:1200px;'>
-            <div class='row justify-content-center g-4'>
-                <div class='col-12 col-md-4'>
-                    <div class='card' style='background:#fff;border:3px solid #667eea;box-shadow:0 8px 32px rgba(102,126,234,0.2);border-radius:16px;'>
-                        <div class='card-body text-center p-4'>
-                            <div style='font-size:1rem;color:#667eea;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'>💪 Fitness (CTL)</div>
-                            <div style='font-size:4rem;font-weight:900;color:#667eea;margin:20px 0;line-height:1;'>{last_metric['ctl']:.0f}</div>
-                            <div style='font-size:1rem;color:#495057;font-weight:600;background:#f8f9fa;padding:8px 16px;border-radius:20px;display:inline-block;'>
-                                <span style='font-size:1.3rem;'>{ctl_arrow}</span> {ctl_change:+.1f}% vs semana anterior
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class='col-12 col-md-4'>
-                    <div class='card' style='background:#fff;border:3px solid #f5576c;box-shadow:0 8px 32px rgba(245,87,108,0.2);border-radius:16px;'>
-                        <div class='card-body text-center p-4'>
-                            <div style='font-size:1rem;color:#f5576c;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'>😴 Fadiga (ATL)</div>
-                            <div style='font-size:4rem;font-weight:900;color:#f5576c;margin:20px 0;line-height:1;'>{last_metric['atl']:.0f}</div>
-                            <div style='font-size:1rem;color:#495057;font-weight:600;background:#f8f9fa;padding:8px 16px;border-radius:20px;display:inline-block;'>
-                                <span style='font-size:1.3rem;'>{atl_arrow}</span> {atl_change:+.1f}% vs semana anterior
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class='col-12 col-md-4'>
-                    <div class='card' style='background:#fff;border:3px solid #00f2fe;box-shadow:0 8px 32px rgba(0,242,254,0.2);border-radius:16px;'>
-                        <div class='card-body text-center p-4'>
-                            <div style='font-size:1rem;color:#00b8d4;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'>⚖️ Forma (TSB)</div>
-                            <div style='font-size:4rem;font-weight:900;color:#00b8d4;margin:20px 0;line-height:1;'>{last_metric['tsb']:.0f}</div>
-                            <div style='font-size:1rem;color:#495057;font-weight:600;background:#f8f9fa;padding:8px 16px;border-radius:20px;display:inline-block;'>
-                                <span style='font-size:1.3rem;'>{tsb_arrow}</span> {tsb_change:+.1f}% vs semana anterior
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # ============ OBJETIVOS: PARA ONDE VOCÊ VAI ============
-        st.markdown("## 🎯 Objetivos: Para Onde Você Vai")
-        st.markdown("*Seus objetivos de treinamento e progresso atual*")
-        
-        # Carregar dados para calcular progresso
-        workouts = load_workouts()
-        config = load_config()
-        
-        goals_progress = calculate_goals_progress(workouts, config)
-        
-        # Cards de progresso semanal
-        st.markdown("#### 📅 Progresso Semanal")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            weekly_distance = goals_progress['weekly']['distance']
-            weekly_distance_goal = config.get('weekly_distance_goal', 50.0)
-            distance_pct = min(100, (weekly_distance / weekly_distance_goal * 100) if weekly_distance_goal > 0 else 0)
-            st.metric(
-                "🏃 Distância",
-                f"{weekly_distance:.1f}km / {weekly_distance_goal:.0f}km",
-                f"{distance_pct:.1f}%"
-            )
-            st.progress(distance_pct / 100)
-        
-        with col2:
-            weekly_tss = goals_progress['weekly']['tss']
-            weekly_tss_goal = config.get('weekly_tss_goal', 300)
-            tss_pct = min(100, (weekly_tss / weekly_tss_goal * 100) if weekly_tss_goal > 0 else 0)
-            st.metric(
-                "🎯 TSS",
-                f"{weekly_tss:.0f} / {weekly_tss_goal}",
-                f"{tss_pct:.1f}%"
-            )
-            st.progress(tss_pct / 100)
-        
-        with col3:
-            weekly_hours = goals_progress['weekly']['hours']
-            weekly_hours_goal = config.get('weekly_hours_goal', 7.0)
-            hours_pct = min(100, (weekly_hours / weekly_hours_goal * 100) if weekly_hours_goal > 0 else 0)
-            st.metric(
-                "⏱️ Horas",
-                f"{format_hours_decimal(weekly_hours)} / {format_hours_decimal(weekly_hours_goal)}",
-                f"{hours_pct:.1f}%"
-            )
-            st.progress(hours_pct / 100)
-        
-        with col4:
-            weekly_activities = goals_progress['weekly']['activities']
-            weekly_activities_goal = config.get('weekly_activities_goal', 5)
-            activities_pct = min(100, (weekly_activities / weekly_activities_goal * 100) if weekly_activities_goal > 0 else 0)
-            st.metric(
-                "📊 Atividades",
-                f"{weekly_activities} / {weekly_activities_goal}",
-                f"{activities_pct:.1f}%"
-            )
-            st.progress(activities_pct / 100)
-        
-        # Cards de progresso mensal
-        st.markdown("#### 📊 Progresso Mensal")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            monthly_distance = goals_progress['monthly']['distance']
-            monthly_distance_goal = config.get('monthly_distance_goal', 200.0)
-            distance_pct = min(100, (monthly_distance / monthly_distance_goal * 100) if monthly_distance_goal > 0 else 0)
-            st.metric(
-                "🏃 Distância",
-                f"{monthly_distance:.1f}km / {monthly_distance_goal:.0f}km",
-                f"{distance_pct:.1f}%"
-            )
-            st.progress(distance_pct / 100)
-        
-        with col2:
-            monthly_tss = goals_progress['monthly']['tss']
-            monthly_tss_goal = config.get('monthly_tss_goal', 1200)
-            tss_pct = min(100, (monthly_tss / monthly_tss_goal * 100) if monthly_tss_goal > 0 else 0)
-            st.metric(
-                "🎯 TSS",
-                f"{monthly_tss:.0f} / {monthly_tss_goal}",
-                f"{tss_pct:.1f}%"
-            )
-            st.progress(tss_pct / 100)
-        
-        with col3:
-            monthly_hours = goals_progress['monthly']['hours']
-            monthly_hours_goal = config.get('monthly_hours_goal', 30.0)
-            hours_pct = min(100, (monthly_hours / monthly_hours_goal * 100) if monthly_hours_goal > 0 else 0)
-            st.metric(
-                "⏱️ Horas",
-                f"{format_hours_decimal(monthly_hours)} / {format_hours_decimal(monthly_hours_goal)}",
-                f"{hours_pct:.1f}%"
-            )
-            st.progress(hours_pct / 100)
-        
-        with col4:
-            monthly_activities = goals_progress['monthly']['activities']
-            monthly_activities_goal = config.get('monthly_activities_goal', 20)
-            activities_pct = min(100, (monthly_activities / monthly_activities_goal * 100) if monthly_activities_goal > 0 else 0)
-            st.metric(
-                "📊 Atividades",
-                f"{monthly_activities} / {monthly_activities_goal}",
-                f"{activities_pct:.1f}%"
-            )
-            st.progress(activities_pct / 100)
-        
-        # Metas de performance
-        st.markdown("#### 🏆 Metas de Performance")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            current_ctl = goals_progress['current_ctl']
-            target_ctl = config.get('target_ctl', 50)
-            ctl_pct = min(100, (current_ctl / target_ctl * 100) if target_ctl > 0 else 0)
-            status_emoji = "✅" if current_ctl >= target_ctl else "🎯"
-            st.metric(
-                f"{status_emoji} CTL Atual vs Alvo",
-                f"{current_ctl:.1f} / {target_ctl}",
-                f"{ctl_pct:.1f}%"
-            )
-            st.progress(ctl_pct / 100)
-        
-        with col2:
-            current_atl = goals_progress['current_atl']
-            target_atl_max = config.get('target_atl_max', 80)
-            atl_pct = min(100, (current_atl / target_atl_max * 100) if target_atl_max > 0 else 0)
-            status_emoji = "⚠️" if current_atl > target_atl_max else "✅"
-            st.metric(
-                f"{status_emoji} ATL vs Máximo",
-                f"{current_atl:.1f} / {target_atl_max}",
-                f"{atl_pct:.1f}%"
-            )
-            st.progress(atl_pct / 100)
-            if current_atl > target_atl_max:
-                st.warning("⚠️ Atenção: Fadiga acima do limite recomendado!")
-
-        from datetime import datetime as dt
-
-        # ============ TREINAMENTO: COMO CHEGAR LÁ ============
-        st.markdown("## 🏃 Treinamento: Como Chegar Lá")
-        st.markdown("*Suas zonas de intensidade e atividade semanal*")
-        config_z = load_config()
-        hr_max = float(config_z.get('hr_max', 191))
-        hr_rest = float(config_z.get('hr_rest', 50))
-        hr_lthr = float(config_z.get('hr_threshold', 162))
-        ftp = float(config_z.get('ftp', 260))  # FTP padrão 260
-        pace_thr_str = str(config_z.get('pace_threshold', '4:22'))
-        def parse_pace(pace_str):
-            try:
-                min_, sec = map(int, pace_str.strip().split(':'))
-                return min_ * 60 + sec
-            except:
-                return 300  # default 5:00
-        pace_thr = parse_pace(pace_thr_str)
-
-
-        # Zonas de Corrida (em pace min/km)
-        def parse_pace(pace_str):
-            try:
-                min_, sec = map(int, pace_str.strip().split(':'))
-                return min_ * 60 + sec
-            except:
-                return 300  # default 5:00
-
-        pace_thr = parse_pace(str(config_z.get('pace_threshold', '5:00')))
-        # Zonas de Corrida DINÂMICAS conforme pace_threshold
-        # Limites em segundos: Z1: >338, Z2: 338-299, Z3: 299-278, Z4: 278-262, Z5a: 262-254, Z5b: 254-235, Z5c: <235
-        # Base: pace_thr (em segundos)
-        corrida_zonas = [
-            ("Z1", pace_thr+76, 9999, "Recuperação"),
-            ("Z2", pace_thr+17, pace_thr+76, "Endurance"),
-            ("Z3", pace_thr-4, pace_thr+17, "Tempo"),
-            ("Z4", pace_thr-20, pace_thr-4, "Limiar"),
-            ("Z5a", pace_thr-28, pace_thr-20, "VO2max (a)"),
-            ("Z5b", pace_thr-47, pace_thr-28, "VO2max (b)"),
-            ("Z5c", 1, pace_thr-47, "Sprint / Anaeróbio"),
-        ]
-        def pace_str(s):
-            m = int(s // 60)
-            s = int(s % 60)
-            return f"{m}:{s:02d}"
-        corrida_rows = []
-        for z, s_ini, s_fim, desc in corrida_zonas:
-            if s_ini > s_fim:
-                corrida_rows.append(f"<tr><td>{z}</td><td>> {pace_str(s_fim)} min/km</td><td>{desc}</td></tr>")
-            elif s_fim > 900:
-                corrida_rows.append(f"<tr><td>{z}</td><td>< {pace_str(s_ini)} min/km</td><td>{desc}</td></tr>")
-            else:
-                corrida_rows.append(f"<tr><td>{z}</td><td>{pace_str(s_ini)} - {pace_str(s_fim)} min/km</td><td>{desc}</td></tr>")
-
-        # Zonas de Ciclismo (em watts)
-        # Zonas de Ciclismo DINÂMICAS conforme FTP
-        # Limites: Z1: 0-0.50*ftp, Z2: 0.51-0.68*ftp, Z3: 0.69-0.82*ftp, Z4: 0.83-0.95*ftp, Z5: 0.96-1.09*ftp, Z6: 1.10-2.00*ftp
-        ciclismo_zonas = [
-            ("Z1", 0, 0.50, "Recuperação Ativa"),
-            ("Z2", 0.51, 0.68, "Endurance"),
-            ("Z3", 0.69, 0.82, "Tempo"),
-            ("Z4", 0.83, 0.95, "Limiar"),
-            ("Z5", 0.96, 1.09, "VO2max"),
-            ("Z6", 1.10, 2.00, "Anaeróbio / Sprint"),
-        ]
-        ciclismo_rows = []
-        for z, f_ini, f_fim, desc in ciclismo_zonas:
-            w_ini = int(round(ftp * f_ini))
-            w_fim = int(round(ftp * f_fim))
-            ciclismo_rows.append(f"<tr><td>{z}</td><td>{w_ini}-{w_fim} W</td><td>{desc}</td></tr>")
-
-        st.markdown(f"""
-        <div class='container' style='max-width:900px;margin:0 auto 32px auto;'>
-            <div class='row'>
-                <div class='col-12 col-md-6'>
-                    <div class='card' style='border:2px solid #0d6efd;border-radius:14px;'>
-                        <div class='card-body'>
-                            <h3 style='color:#0d6efd;font-weight:700;'>🏃‍♂️ Zonas de Corrida (pace)</h3>
-                            <table class='table table-striped' style='font-size:0.98rem;'>
-                                <thead><tr><th>Zona</th><th>Faixa (min/km)</th><th>Descrição</th></tr></thead>
-                                <tbody>{''.join(corrida_rows)}</tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-                <div class='col-12 col-md-6'>
-                    <div class='card' style='border:2px solid #00b8d4;border-radius:14px;'>
-                        <div class='card-body'>
-                            <h3 style='color:#00b8d4;font-weight:700;'>🚴‍♂️ Zonas de Ciclismo (W)</h3>
-                            <table class='table table-striped' style='font-size:0.98rem;'>
-                                <thead><tr><th>Zona</th><th>Faixa (W)</th><th>Descrição</th></tr></thead>
-                                <tbody>{''.join(ciclismo_rows)}</tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Calcular início e fim da semana atual
-        hoje = datetime.now()
-        inicio_semana = (hoje - timedelta(days=hoje.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-        fim_semana = (inicio_semana + timedelta(days=6)).replace(hour=23, minute=59, second=59)
-        
-        st.markdown(f"""
-        <div class='container' style='margin-bottom:18px;'>
-            <div class='row'>
-                <div class='col text-center'>
-                    <h4 style='font-weight:600;margin-bottom:2px;'>Resumo Semanal</h4>
-                    <span style='color:#888;font-size:15px;'>
-                        {inicio_semana.day} a {fim_semana.day} de {fim_semana.strftime('%B')} de {fim_semana.year}
-                    </span>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Filtrar treinos da semana
-        workouts_semana = load_workouts()
-        treinos_semana = []
-        for w in workouts_semana:
-            data = None
-            if w.get('startTimeLocal'):
-                try:
-                    data = dt.strptime(w['startTimeLocal'], '%Y-%m-%d %H:%M:%S')
-                except:
-                    pass
-            elif w.get('startTimeGMT'):
-                try:
-                    data = dt.strptime(w['startTimeGMT'], '%Y-%m-%d %H:%M:%S')
-                except:
-                    pass
-            elif w.get('startTimeInSeconds'):
-                data = dt.fromtimestamp(w['startTimeInSeconds'])
-            
-            if data and inicio_semana <= data <= fim_semana:
-                treinos_semana.append({'workout': w, 'data': data})
-        
-        # Horas completadas
-        def format_horas(horas_decimais):
-            """Converte horas decimais para formato hh:mm:ss"""
-            total_segundos = int(horas_decimais * 3600)
-            horas = total_segundos // 3600
-            minutos = (total_segundos % 3600) // 60
-            segundos = total_segundos % 60
-            return f"{horas:02d}:{minutos:02d}:{segundos:02d}"
-        
-        horas_completadas = sum(t['workout'].get('duration',0)/3600 for t in treinos_semana)
-        # TSS (calculado se não existir)
-        tss_total = 0.0
-        tss_totais_por_tipo = {'tss': 0.0, 'rtss': 0.0, 'stss': 0.0, 'hrtss': 0.0}
-        config = load_config()  # Carregar config para usar nos cálculos
-        for t in treinos_semana:
-            w = t['workout']
-            tss_calc = compute_tss_variants(w, config)
-            # Atualiza o dict local para reuso nas outras visualizações
-            for k, v in tss_calc.items():
-                w[k] = v
-            tss_total += float(w.get('tss', 0) or 0)
-            for k in tss_totais_por_tipo.keys():
-                tss_totais_por_tipo[k] += float(w.get(k, 0) or 0)
-        
-        # Cards de resumo
-        st.markdown(f"""
-        <div class='row justify-content-center' style='margin-bottom:15px;'>
-            <div class='col-auto'>
-                <div class='card shadow-sm text-center' style='min-width:140px;'>
-                    <div class='card-body p-3'>
-                        <div style='font-size:14px;color:#0d6efd;font-weight:600;'>Horas Completadas</div>
-                        <div style='font-size:26px;font-weight:700;'>{format_horas(horas_completadas)}</div>
-                    </div>
-                </div>
-            </div>
-            <div class='col-auto'>
-                <div class='card shadow-sm text-center' style='min-width:140px;'>
-                    <div class='card-body p-3'>
-                        <div style='font-size:14px;color:#dc3545;font-weight:600;'>TSS Semanal</div>
-                        <div style='font-size:26px;font-weight:700;'>{tss_total:.0f}</div>
-                    </div>
-                </div>
-            </div>
-            <div class='col-auto'>
-                <div class='card shadow-sm text-center' style='min-width:140px;'>
-                    <div class='card-body p-3'>
-                        <div style='font-size:14px;color:#20c997;font-weight:600;'>Treinos</div>
-                        <div style='font-size:26px;font-weight:700;'>{len(treinos_semana)}</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # ============ GRÁFICO SEMANAL MODERNO (PLOTLY) ============
-        st.markdown("### 📊 Treinos da Semana (Horas por Dia)")
-
-        import plotly.graph_objects as go
-
-        # Preparar dados para o gráfico
-        dias = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
-        tipos_cores = {
-            'natacao': '#007bff',    # Azul - Natação
-            'ciclismo': '#28a745',  # Verde - Ciclismo
-            'corrida': '#fd7e14',   # Laranja - Corrida
-            'forca': '#6f42c1',     # Roxo - Musculação
-            'outros': '#6c757d'
+# Função para calcular recordes pessoais
+def calculate_personal_records(metrics, workouts):
+    """Calcula recordes pessoais do atleta"""
+    records = {}
+    
+    # Maior CTL alcançado
+    if metrics:
+        max_ctl_metric = max(metrics, key=lambda m: m['ctl'])
+        records['max_ctl'] = {
+            'value': max_ctl_metric['ctl'],
+            'date': max_ctl_metric['date'],
+            'icon': '💪',
+            'label': 'Maior CTL',
+            'unit': 'pts'
         }
+    
+    # Maior TSS em um dia
+    if workouts:
+        max_tss_workout = max(workouts, key=lambda w: float(w.get('tss', 0) or 0))
+        records['max_tss'] = {
+            'value': float(max_tss_workout.get('tss', 0) or 0),
+            'date': max_tss_workout.get('startTimeLocal', 'N/A')[:10],
+            'icon': '🔥',
+            'label': 'Maior TSS',
+            'unit': 'pts',
+            'activity': max_tss_workout.get('activityName', 'N/A')[:30]
+        }
+        
+        # Maior distância
+        max_distance_workout = max(workouts, key=lambda w: float(w.get('distance', 0) or 0))
+        records['max_distance'] = {
+            'value': float(max_distance_workout.get('distance', 0) or 0) / 1000,
+            'date': max_distance_workout.get('startTimeLocal', 'N/A')[:10],
+            'icon': '🏃',
+            'label': 'Maior Distância',
+            'unit': 'km',
+            'activity': max_distance_workout.get('activityName', 'N/A')[:30]
+        }
+        
+        # Maior duração
+        max_duration_workout = max(workouts, key=lambda w: float(w.get('duration', 0) or 0))
+        records['max_duration'] = {
+            'value': float(max_duration_workout.get('duration', 0) or 0) / 3600,
+            'date': max_duration_workout.get('startTimeLocal', 'N/A')[:10],
+            'icon': '⏱️',
+            'label': 'Maior Duração',
+            'unit': 'h',
+            'activity': max_duration_workout.get('activityName', 'N/A')[:30]
+        }
+    
+    # Calcular maior semana (TSS)
+    try:
+        weekly_tss = {}
+        for workout in workouts:
+            start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
+            if not start_time:
+                continue
+            activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+            week_key = activity_date.strftime('%Y-W%U')
+            weekly_tss[week_key] = weekly_tss.get(week_key, 0) + float(workout.get('tss', 0) or 0)
+        
+        if weekly_tss:
+            max_week = max(weekly_tss.items(), key=lambda x: x[1])
+            records['max_week_tss'] = {
+                'value': max_week[1],
+                'date': max_week[0],
+                'icon': '📊',
+                'label': 'Maior Semana',
+                'unit': 'TSS'
+            }
+    except:
+        pass
+    
+    return records
 
-        valores_por_tipo = {tipo: [0]*7 for tipo in tipos_cores.keys()}
+# Função para calcular comparações de períodos
+def calculate_period_comparison(metrics):
+    """Compara semana atual vs anterior"""
+    if len(metrics) < 14:
+        return None
+    
+    # Últimos 7 dias (semana atual)
+    current_week = metrics[-7:]
+    # 7 dias anteriores (semana passada)
+    previous_week = metrics[-14:-7]
+    
+    # Calcular médias
+    current_avg = {
+        'ctl': sum(m['ctl'] for m in current_week) / len(current_week),
+        'atl': sum(m['atl'] for m in current_week) / len(current_week),
+        'tsb': sum(m['tsb'] for m in current_week) / len(current_week)
+    }
+    
+    previous_avg = {
+        'ctl': sum(m['ctl'] for m in previous_week) / len(previous_week),
+        'atl': sum(m['atl'] for m in previous_week) / len(previous_week),
+        'tsb': sum(m['tsb'] for m in previous_week) / len(previous_week)
+    }
+    
+    # Calcular variações
+    comparison = {
+        'ctl': {
+            'current': current_avg['ctl'],
+            'previous': previous_avg['ctl'],
+            'change': current_avg['ctl'] - previous_avg['ctl'],
+            'change_pct': ((current_avg['ctl'] - previous_avg['ctl']) / previous_avg['ctl'] * 100) if previous_avg['ctl'] > 0 else 0
+        },
+        'atl': {
+            'current': current_avg['atl'],
+            'previous': previous_avg['atl'],
+            'change': current_avg['atl'] - previous_avg['atl'],
+            'change_pct': ((current_avg['atl'] - previous_avg['atl']) / previous_avg['atl'] * 100) if previous_avg['atl'] > 0 else 0
+        },
+        'tsb': {
+            'current': current_avg['tsb'],
+            'previous': previous_avg['tsb'],
+            'change': current_avg['tsb'] - previous_avg['tsb'],
+            'change_pct': ((current_avg['tsb'] - previous_avg['tsb']) / abs(previous_avg['tsb']) * 100) if previous_avg['tsb'] != 0 else 0
+        }
+    }
+    
+    return comparison
 
-        for t in treinos_semana:
-            idx = t['data'].weekday()
-            tipo = t['workout'].get('activityType', {}).get('typeKey', '').lower()
-            dur = t['workout'].get('duration',0)/3600
-
-            if tipo in ['running', 'treadmill_running', 'track_running', 'trail_running', 'indoor_running', 'virtual_running']:
-                valores_por_tipo['corrida'][idx] += dur
-            elif tipo in ['cycling', 'road_cycling', 'mountain_biking', 'indoor_cycling', 'gravel_cycling', 'virtual_cycling',
-                        'virtual_ride', 'indoor_biking', 'bike', 'biking', 'e_bike_ride', 'e_mountain_bike_ride']:
-                valores_por_tipo['ciclismo'][idx] += dur
-            elif tipo in ['swimming', 'pool_swimming', 'open_water_swimming', 'indoor_swimming', 'lap_swimming']:
-                valores_por_tipo['natacao'][idx] += dur
-            elif tipo in ['strength_training', 'weight_training', 'functional_strength_training', 'gym_strength_training', 'crossfit', 'hiit']:
-                valores_por_tipo['forca'][idx] += dur
+# Função para calcular conquistas/achievements
+def calculate_achievements(metrics, workouts):
+    """Calcula conquistas gamificadas do usuário"""
+    achievements = []
+    
+    # Conquista 1: Sequência de dias consecutivos
+    if workouts:
+        dates_with_workouts = set()
+        for workout in workouts:
+            try:
+                start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
+                if start_time:
+                    activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").date()
+                    dates_with_workouts.add(activity_date)
+            except:
+                pass
+        
+        # Calcular maior sequência
+        if dates_with_workouts:
+            sorted_dates = sorted(dates_with_workouts, reverse=True)
+            current_streak = 1
+            max_streak = 1
+            
+            for i in range(len(sorted_dates) - 1):
+                if (sorted_dates[i] - sorted_dates[i+1]).days == 1:
+                    current_streak += 1
+                    max_streak = max(max_streak, current_streak)
+                else:
+                    current_streak = 1
+            
+            if max_streak >= 7:
+                achievements.append({
+                    'icon': '🔥',
+                    'title': 'Sequência de Fogo',
+                    'description': f'{max_streak} dias consecutivos de treino',
+                    'unlocked': True,
+                    'color': 'danger',
+                    'progress': 100
+                })
             else:
-                valores_por_tipo['outros'][idx] += dur
+                achievements.append({
+                    'icon': '🔥',
+                    'title': 'Sequência de Fogo',
+                    'description': f'Treine 7 dias seguidos ({max_streak}/7)',
+                    'unlocked': False,
+                    'color': 'secondary',
+                    'progress': int(max_streak / 7 * 100)
+                })
+    
+    # Conquista 2: Centurião (100+ TSS em um dia)
+    max_daily_tss = 0
+    if workouts:
+        daily_tss = {}
+        for workout in workouts:
+            try:
+                start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
+                if start_time:
+                    date_key = start_time[:10]
+                    tss = float(workout.get('tss', 0) or 0)
+                    daily_tss[date_key] = daily_tss.get(date_key, 0) + tss
+            except:
+                pass
+        
+        if daily_tss:
+            max_daily_tss = max(daily_tss.values())
+    
+    if max_daily_tss >= 100:
+        achievements.append({
+            'icon': '💯',
+            'title': 'Centurião',
+            'description': f'Maior dia: {max_daily_tss:.0f} TSS',
+            'unlocked': True,
+            'color': 'success',
+            'progress': 100
+        })
+    else:
+        achievements.append({
+            'icon': '💯',
+            'title': 'Centurião',
+            'description': f'Alcance 100 TSS em um dia ({max_daily_tss:.0f}/100)',
+            'unlocked': False,
+            'color': 'secondary',
+            'progress': int(max_daily_tss)
+        })
+    
+    # Conquista 3: Maratonista (42km+ em corrida)
+    max_running_distance = 0
+    if workouts:
+        for workout in workouts:
+            try:
+                activity_type = workout.get('activityType', {}).get('typeKey', '').lower()
+                if 'running' in activity_type or 'corrida' in activity_type:
+                    distance = float(workout.get('distance', 0) or 0) / 1000
+                    max_running_distance = max(max_running_distance, distance)
+            except:
+                pass
+    
+    if max_running_distance >= 42:
+        achievements.append({
+            'icon': '🏃',
+            'title': 'Maratonista',
+            'description': f'Corrida de {max_running_distance:.1f}km',
+            'unlocked': True,
+            'color': 'primary',
+            'progress': 100
+        })
+    else:
+        achievements.append({
+            'icon': '🏃',
+            'title': 'Maratonista',
+            'description': f'Corra 42km em uma atividade ({max_running_distance:.1f}/42km)',
+            'unlocked': False,
+            'color': 'secondary',
+            'progress': int(max_running_distance / 42 * 100)
+        })
+    
+    # Conquista 4: Sprint Master (5+ treinos na semana)
+    max_weekly_activities = 0
+    if workouts:
+        weekly_count = {}
+        for workout in workouts:
+            try:
+                start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
+                if start_time:
+                    activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+                    week_key = activity_date.strftime('%Y-W%U')
+                    weekly_count[week_key] = weekly_count.get(week_key, 0) + 1
+            except:
+                pass
+        
+        if weekly_count:
+            max_weekly_activities = max(weekly_count.values())
+    
+    if max_weekly_activities >= 5:
+        achievements.append({
+            'icon': '⚡',
+            'title': 'Sprint Master',
+            'description': f'Melhor semana: {max_weekly_activities} treinos',
+            'unlocked': True,
+            'color': 'warning',
+            'progress': 100
+        })
+    else:
+        achievements.append({
+            'icon': '⚡',
+            'title': 'Sprint Master',
+            'description': f'Complete 5 treinos em uma semana ({max_weekly_activities}/5)',
+            'unlocked': False,
+            'color': 'secondary',
+            'progress': int(max_weekly_activities / 5 * 100)
+        })
+    
+    # Conquista 5: Elite (CTL >= 60)
+    max_ctl = 0
+    if metrics:
+        max_ctl = max(m['ctl'] for m in metrics)
+    
+    if max_ctl >= 60:
+        achievements.append({
+            'icon': '👑',
+            'title': 'Elite',
+            'description': f'CTL máximo: {max_ctl:.1f}',
+            'unlocked': True,
+            'color': 'info',
+            'progress': 100
+        })
+    else:
+        achievements.append({
+            'icon': '👑',
+            'title': 'Elite',
+            'description': f'Alcance CTL de 60 ({max_ctl:.1f}/60)',
+            'unlocked': False,
+            'color': 'secondary',
+            'progress': int(max_ctl / 60 * 100)
+        })
+    
+    return achievements
 
-        # Criar gráfico de barras empilhadas com Plotly
-        fig_semana = go.Figure()
+# Função para gerar previsões e recomendações
+def generate_predictions(metrics, config):
+    """Gera previsões baseadas nas tendências atuais"""
+    predictions = []
+    
+    if len(metrics) < 14:
+        return predictions
+    
+    last_metric = metrics[-1]
+    last_14_metrics = metrics[-14:]
+    
+    # Calcular tendência de CTL (últimos 14 dias)
+    ctl_values = [m['ctl'] for m in last_14_metrics]
+    if len(ctl_values) >= 2:
+        # Regressão linear simples
+        x = list(range(len(ctl_values)))
+        n = len(x)
+        sum_x = sum(x)
+        sum_y = sum(ctl_values)
+        sum_xy = sum(xi * yi for xi, yi in zip(x, ctl_values))
+        sum_x2 = sum(xi * xi for xi in x)
+        
+        slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x) if (n * sum_x2 - sum_x * sum_x) != 0 else 0
+        
+        # Projetar CTL para 7, 14 e 30 dias
+        current_ctl = last_metric['ctl']
+        ctl_7_days = current_ctl + (slope * 7)
+        ctl_14_days = current_ctl + (slope * 14)
+        ctl_30_days = current_ctl + (slope * 30)
+        
+        ctl_target = config.get('ctl_target', 50.0)
+        
+        # Previsão 1: Quando atingirá meta de CTL
+        if slope > 0 and current_ctl < ctl_target:
+            days_to_target = int((ctl_target - current_ctl) / slope)
+            if days_to_target > 0 and days_to_target < 90:
+                target_date = (datetime.now() + timedelta(days=days_to_target)).strftime('%d/%m/%Y')
+                predictions.append({
+                    'icon': '🎯',
+                    'title': 'Meta de CTL',
+                    'prediction': f'Você atingirá CTL {ctl_target:.0f} em aproximadamente {days_to_target} dias',
+                    'date': target_date,
+                    'confidence': 'média' if slope > 0.5 else 'baixa',
+                    'type': 'goal'
+                })
+        
+        # Previsão 2: Projeções de curto/médio prazo
+        predictions.append({
+            'icon': '📈',
+            'title': 'Projeção de Forma',
+            'prediction': f'Em 7 dias: CTL {ctl_7_days:.1f} | Em 14 dias: CTL {ctl_14_days:.1f} | Em 30 dias: CTL {ctl_30_days:.1f}',
+            'trend': 'alta' if slope > 0 else 'baixa',
+            'confidence': 'média',
+            'type': 'projection'
+        })
+    
+    # Recomendação 3: TSS sugerido para próxima semana
+    recent_tss = [m.get('daily_tss', 0) for m in last_14_metrics[-7:]]
+    avg_weekly_tss = sum(recent_tss)
+    
+    if last_metric['tsb'] < -10:
+        # TSB muito negativo - recomendar redução
+        recommended_tss = avg_weekly_tss * 0.7
+        predictions.append({
+            'icon': '😴',
+            'title': 'Recomendação de Carga',
+            'prediction': f'Reduza o TSS semanal para ~{recommended_tss:.0f} (30% a menos) para recuperação',
+            'reason': f'Seu TSB está em {last_metric["tsb"]:.1f}, indicando fadiga acumulada',
+            'confidence': 'alta',
+            'type': 'recommendation'
+        })
+    elif last_metric['tsb'] > 15:
+        # TSB muito positivo - pode aumentar
+        recommended_tss = avg_weekly_tss * 1.2
+        predictions.append({
+            'icon': '⚡',
+            'title': 'Oportunidade de Carga',
+            'prediction': f'Você pode aumentar o TSS semanal para ~{recommended_tss:.0f} (20% a mais)',
+            'reason': f'Seu TSB está em {last_metric["tsb"]:.1f}, você está bem descansado',
+            'confidence': 'alta',
+            'type': 'recommendation'
+        })
+    else:
+        # TSB ideal - manter
+        predictions.append({
+            'icon': '✅',
+            'title': 'Carga Ideal',
+            'prediction': f'Mantenha o TSS semanal em torno de {avg_weekly_tss:.0f}',
+            'reason': f'Seu TSB está em {last_metric["tsb"]:.1f}, na zona ideal',
+            'confidence': 'alta',
+            'type': 'recommendation'
+        })
+    
+    # Previsão 4: Melhor janela para prova/evento
+    atl_trend = [m['atl'] for m in last_14_metrics]
+    if len(atl_trend) >= 2:
+        atl_slope = (atl_trend[-1] - atl_trend[0]) / len(atl_trend)
+        
+        if atl_slope < 0:  # Fadiga declinando
+            days_to_peak = int(abs(last_metric['atl'] / atl_slope)) if atl_slope != 0 else 7
+            peak_date = (datetime.now() + timedelta(days=min(days_to_peak, 21))).strftime('%d/%m/%Y')
+            predictions.append({
+                'icon': '🏁',
+                'title': 'Janela de Performance',
+                'prediction': f'Melhor momento para evento: ~{peak_date}',
+                'reason': 'Fadiga em declínio, forma mantida',
+                'confidence': 'média',
+                'type': 'timing'
+            })
+    
+    return predictions
 
-        # Adicionar barras para cada tipo
-        labels_legendas = {'corrida': '🏃 Corrida', 'ciclismo': '🚴 Ciclismo', 'natacao': '🏊 Natação', 'forca': '💪 Força', 'outros': '⚽ Outros'}
-        for tipo, cor in tipos_cores.items():
-            valores = valores_por_tipo[tipo]
-            if sum(valores) > 0:  # Só adicionar se houver valores
-                fig_semana.add_trace(go.Bar(
-                    name=labels_legendas[tipo],
-                    x=dias,
-                    y=valores,
-                    marker_color=cor,
-                    hovertemplate='<b>%{fullData.name}</b><br>Dia: %{x}<br>Horas: %{y:.2f}h<extra></extra>'
-                ))
+# Função para exportar relatório CSV
+def export_to_csv(metrics, workouts):
+    """Exporta métricas e workouts para CSV"""
+    try:
+        import io
+        
+        # Criar CSV de métricas
+        metrics_csv = io.StringIO()
+        metrics_csv.write("Data,CTL,ATL,TSB\n")
+        for m in metrics:
+            metrics_csv.write(f"{m['date']},{m['ctl']:.2f},{m['atl']:.2f},{m['tsb']:.2f}\n")
+        
+        # Criar CSV de workouts
+        workouts_csv = io.StringIO()
+        workouts_csv.write("Data,Nome,Tipo,Distância(km),Duração(h),TSS\n")
+        for w in workouts:
+            start_time = w.get('startTimeLocal', w.get('startTime', 'N/A'))
+            name = w.get('activityName', 'N/A').replace(',', ';')
+            activity_type = w.get('activityType', {}).get('typeKey', 'N/A')
+            distance = float(w.get('distance', 0) or 0) / 1000
+            duration = float(w.get('duration', 0) or 0) / 3600
+            tss = float(w.get('tss', 0) or 0)
+            workouts_csv.write(f"{start_time},{name},{activity_type},{distance:.2f},{duration:.2f},{tss:.1f}\n")
+        
+        return metrics_csv.getvalue(), workouts_csv.getvalue()
+    except Exception as e:
+        return None, None
 
-        # Calcular totais por dia para mostrar no hover
-        totais_por_dia = [sum(valores_por_tipo[tipo][i] for tipo in tipos_cores.keys()) for i in range(7)]
-
-        # Configurar layout
-        fig_semana.update_layout(
+# Função para criar tendência mensal (últimos 6 meses)
+def create_monthly_trend_chart(metrics, workouts):
+    """Cria gráfico de evolução mensal com barras por modalidade"""
+    try:
+        from datetime import datetime as dt_parse
+        import calendar
+        
+        # Organizar dados por mês
+        monthly_data = {}
+        
+        # Agrupar workouts por mês e modalidade
+        for workout in workouts:
+            try:
+                start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
+                if not start_time:
+                    continue
+                
+                activity_date = dt_parse.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+                month_key = activity_date.strftime('%Y-%m')
+                month_label = activity_date.strftime('%b/%y')
+                
+                if month_key not in monthly_data:
+                    monthly_data[month_key] = {
+                        'label': month_label,
+                        'running': 0,
+                        'cycling': 0,
+                        'swimming': 0,
+                        'strength': 0,
+                        'other': 0,
+                        'total_tss': 0,
+                        'avg_ctl': 0,
+                        'count_ctl': 0
+                    }
+                
+                # Categorizar atividade
+                activity_type = workout.get('activityType', {}).get('typeKey', '').lower()
+                tss = float(workout.get('tss', 0) or 0)
+                
+                if 'running' in activity_type:
+                    monthly_data[month_key]['running'] += tss
+                elif 'cycling' in activity_type or 'biking' in activity_type:
+                    monthly_data[month_key]['cycling'] += tss
+                elif 'swimming' in activity_type:
+                    monthly_data[month_key]['swimming'] += tss
+                elif 'strength' in activity_type or 'training' in activity_type:
+                    monthly_data[month_key]['strength'] += tss
+                else:
+                    monthly_data[month_key]['other'] += tss
+                
+                monthly_data[month_key]['total_tss'] += tss
+            except:
+                pass
+        
+        # Adicionar CTL médio por mês
+        for metric in metrics:
+            try:
+                month_key = metric['date'][:7]
+                if month_key in monthly_data:
+                    monthly_data[month_key]['avg_ctl'] += metric['ctl']
+                    monthly_data[month_key]['count_ctl'] += 1
+            except:
+                pass
+        
+        # Calcular média de CTL
+        for month_key in monthly_data:
+            if monthly_data[month_key]['count_ctl'] > 0:
+                monthly_data[month_key]['avg_ctl'] /= monthly_data[month_key]['count_ctl']
+        
+        # Pegar últimos 6 meses
+        sorted_months = sorted(monthly_data.keys())[-6:]
+        
+        months_labels = [monthly_data[m]['label'] for m in sorted_months]
+        running_data = [monthly_data[m]['running'] for m in sorted_months]
+        cycling_data = [monthly_data[m]['cycling'] for m in sorted_months]
+        swimming_data = [monthly_data[m]['swimming'] for m in sorted_months]
+        strength_data = [monthly_data[m]['strength'] for m in sorted_months]
+        other_data = [monthly_data[m]['other'] for m in sorted_months]
+        ctl_data = [monthly_data[m]['avg_ctl'] for m in sorted_months]
+        
+        # Criar figura com eixo secundário
+        from plotly.subplots import make_subplots
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        # Barras empilhadas de TSS por modalidade
+        fig.add_trace(
+            go.Bar(name='🏃 Corrida', x=months_labels, y=running_data, marker_color='#fd7e14'),
+            secondary_y=False
+        )
+        fig.add_trace(
+            go.Bar(name='🚴 Ciclismo', x=months_labels, y=cycling_data, marker_color='#28a745'),
+            secondary_y=False
+        )
+        fig.add_trace(
+            go.Bar(name='🏊 Natação', x=months_labels, y=swimming_data, marker_color='#007bff'),
+            secondary_y=False
+        )
+        fig.add_trace(
+            go.Bar(name='💪 Força', x=months_labels, y=strength_data, marker_color='#6f42c1'),
+            secondary_y=False
+        )
+        fig.add_trace(
+            go.Bar(name='⚽ Outros', x=months_labels, y=other_data, marker_color='#6c757d'),
+            secondary_y=False
+        )
+        
+        # Linha de CTL médio
+        fig.add_trace(
+            go.Scatter(
+                name='💪 CTL Médio',
+                x=months_labels,
+                y=ctl_data,
+                mode='lines+markers',
+                line=dict(color='#e74c3c', width=3),
+                marker=dict(size=10, symbol='diamond'),
+                yaxis='y2'
+            ),
+            secondary_y=True
+        )
+        
+        fig.update_layout(
+            title='Evolução Mensal - TSS por Modalidade e CTL',
             barmode='stack',
-            title={
-                'text': f'Treinos da Semana ({inicio_semana.day}-{fim_semana.day} {fim_semana.strftime("%b")})',
-                'y': 0.95,
-                'x': 0.5,
-                'xanchor': 'center',
-                'yanchor': 'top',
-                'font': {'size': 16, 'color': '#212529'}
-            },
-            xaxis_title='Dia da Semana',
-            yaxis_title='Horas de Treino',
+            height=450,
+            hovermode='x unified',
             font={'family': 'Inter, -apple-system, sans-serif', 'size': 12},
             plot_bgcolor='rgba(248,249,250,0.5)',
             paper_bgcolor='white',
-            hovermode='x unified',
-            showlegend=True,
             legend=dict(
                 orientation='h',
                 yanchor='bottom',
-                y=-0.3,
+                y=-0.2,
                 xanchor='center',
-                x=0.5,
-                font={'size': 11}
-            ),
-            margin=dict(l=50, r=50, t=80, b=100)
-        )
-
-        # Adicionar grid e melhorar aparência
-        fig_semana.update_xaxes(showgrid=False, gridcolor='rgba(0,0,0,0.1)')
-        fig_semana.update_yaxes(showgrid=True, gridcolor='rgba(0,0,0,0.1)')
-
-        # Adicionar anotações com totais
-        for i, total in enumerate(totais_por_dia):
-            if total > 0:
-                fig_semana.add_annotation(
-                    x=dias[i],
-                    y=total + 0.1,
-                    text=format_horas(total),
-                    showarrow=False,
-                    font=dict(size=10, color='#495057', weight='bold'),
-                    align='center'
-                )
-
-        st.plotly_chart(fig_semana, use_container_width=True)
-
-        # ============ GRÁFICO DE PIZZA: TIPOS DE TREINO ÚLTIMA SEMANA ============
-        st.markdown("### 🥧 Distribuição dos Tipos de Treino (Última Semana)")
-        workouts = load_workouts()
-        from datetime import datetime as dt, timedelta as td
-        if workouts:
-            hoje = datetime.now()
-            uma_semana_atras = hoje - td(days=7)
-            tipos = {'corrida': 0, 'ciclismo': 0, 'natacao': 0, 'forca': 0, 'outros': 0}
-            horas = {'corrida': 0, 'ciclismo': 0, 'natacao': 0, 'forca': 0, 'outros': 0}
-            for w in workouts:
-                data = None
-                if w.get('startTimeLocal'):
-                    try:
-                        data = dt.strptime(w['startTimeLocal'], '%Y-%m-%d %H:%M:%S')
-                    except:
-                        pass
-                elif w.get('startTimeGMT'):
-                    try:
-                        data = dt.strptime(w['startTimeGMT'], '%Y-%m-%d %H:%M:%S')
-                    except:
-                        pass
-                elif w.get('startTimeInSeconds'):
-                    data = dt.fromtimestamp(w['startTimeInSeconds'])
-                if data and data >= uma_semana_atras:
-                    tipo = w.get('activityType', {}).get('typeKey', '').lower()
-                    dur = w.get('duration', 0) / 3600
-                    if tipo in [
-                        'running', 'treadmill_running', 'track_running', 'trail_running', 'indoor_running', 'virtual_running']:
-                        tipos['corrida'] += 1
-                        horas['corrida'] += dur
-                    elif tipo in [
-                        'cycling', 'road_cycling', 'mountain_biking', 'indoor_cycling', 'gravel_cycling', 'virtual_cycling',
-                        'virtual_ride', 'indoor_biking', 'bike', 'biking', 'e_bike_ride', 'e_mountain_bike_ride', 'commute_cycling', 'touring_cycling', 'recumbent_cycling', 'cyclocross', 'road_biking', 'mountain_biking', 'gravel_biking', 'tandem_cycling', 'bmx', 'fat_bike', 'track_cycling', 'spin_bike']:
-                        tipos['ciclismo'] += 1
-                        horas['ciclismo'] += dur
-                    elif tipo in [
-                        'swimming', 'pool_swimming', 'open_water_swimming', 'indoor_swimming', 'lap_swimming']:
-                        tipos['natacao'] += 1
-                        horas['natacao'] += dur
-                    elif tipo in [
-                        'strength_training', 'weight_training', 'functional_strength_training', 'gym_strength_training', 'crossfit', 'hiit']:
-                        tipos['forca'] += 1
-                        horas['forca'] += dur
-                    else:
-                        tipos['outros'] += 1
-                        horas['outros'] += dur
-            # ============ GRÁFICO MODERNO DE DISTRIBUIÇÃO (PLOTLY) ============
-            # Ordenar do maior para o menor por horas
-            dados = [
-                (k, horas[k], tipos[k]) for k in tipos.keys() if tipos[k] > 0
-            ]
-            dados.sort(key=lambda x: x[1], reverse=True)
-
-            labels_map = {
-                'corrida': '🏃 Corrida',
-                'ciclismo': '🚴 Ciclismo',
-                'natacao': '🏊 Natação',
-                'forca': '💪 Força',
-                'outros': '⚽ Outros'
-            }
-
-            labels = [labels_map[k] for k, _, _ in dados]
-            horas_list = [h for _, h, _ in dados]
-            atividades_list = [a for _, _, a in dados]
-
-            # Mapeamento de cores padronizadas por modalidade
-            cores_por_tipo = {
-                'corrida': '#fd7e14',    # Laranja - Corrida
-                'ciclismo': '#28a745',  # Verde - Ciclismo
-                'natacao': '#007bff',   # Azul - Natação
-                'forca': '#6f42c1',     # Roxo - Musculação
-                'outros': '#6c757d'     # Cinza - Outros
-            }
-
-            # Aplicar cores na ordem dos dados ordenados
-            cores_plotly = [cores_por_tipo[k] for k, _, _ in dados]
-
-            # Criar gráfico de barras horizontais com Plotly
-            fig_dist = go.Figure()
-
-            fig_dist.add_trace(go.Bar(
-                x=horas_list,
-                y=labels,
-                orientation='h',
-                marker=dict(
-                    color=cores_plotly[:len(labels)],
-                    line=dict(width=0)
-                ),
-                text=[f'{format_horas(h)}<br>{a} atividades' for h, a in zip(horas_list, atividades_list)],
-                textposition='outside',
-                hovertemplate='<b>%{y}</b><br>Horas: %{x:.2f}h (%{text})<extra></extra>'
-            ))
-
-            # Calcular total
-            total_horas = sum(horas_list)
-            total_horas_str = format_horas(total_horas)
-
-            # Configurar layout
-            fig_dist.update_layout(
-                title={
-                    'text': f'Distribuição dos Tipos de Treino<br><span style="font-size:14px;color:#6c757d;">Total: {total_horas_str} | {sum(atividades_list)} atividades</span>',
-                    'y': 0.95,
-                    'x': 0.5,
-                    'xanchor': 'center',
-                    'yanchor': 'top',
-                    'font': {'size': 16, 'color': '#212529'}
-                },
-                xaxis_title='Horas (hh:mm:ss)',
-                font={'family': 'Inter, -apple-system, sans-serif', 'size': 12},
-                plot_bgcolor='rgba(248,249,250,0.5)',
-                paper_bgcolor='white',
-                showlegend=False,
-                margin=dict(l=120, r=50, t=80, b=50),
-                height=300
+                x=0.5
             )
+        )
+        
+        fig.update_xaxes(title_text='Mês')
+        fig.update_yaxes(title_text='TSS Total', secondary_y=False)
+        fig.update_yaxes(title_text='CTL Médio', secondary_y=True)
+        
+        return fig
+    except Exception as e:
+        # Retornar gráfico vazio em caso de erro
+        fig = go.Figure()
+        fig.update_layout(title="Sem dados suficientes para tendência mensal", height=450)
+        return fig
 
-            # Melhorar aparência dos eixos
-            fig_dist.update_xaxes(showgrid=True, gridcolor='rgba(0,0,0,0.1)', zeroline=False)
-            fig_dist.update_yaxes(showgrid=False)
+# Funções para renderizar cada aba
+def render_dashboard():
+    metrics = load_metrics()
+    
+    if not metrics:
+        # Dados mock para demonstração
+        metrics = [
+            {"date": "2025-12-01", "ctl": 45.0, "atl": 35.0, "tsb": 10.0},
+            {"date": "2025-12-02", "ctl": 46.0, "atl": 36.0, "tsb": 10.0},
+            {"date": "2025-12-03", "ctl": 47.0, "atl": 37.0, "tsb": 10.0},
+            {"date": "2025-12-04", "ctl": 48.0, "atl": 38.0, "tsb": 10.0},
+            {"date": "2025-12-05", "ctl": 49.0, "atl": 39.0, "tsb": 10.0},
+            {"date": "2025-12-06", "ctl": 50.0, "atl": 40.0, "tsb": 10.0},
+            {"date": "2025-12-07", "ctl": 51.0, "atl": 41.0, "tsb": 10.0},
+        ]
+    
+    last_metric = metrics[-1]
+    prev_metric = metrics[-8] if len(metrics) >= 8 else metrics[0]
+    
+    # Calcular variações
+    ctl_change = ((last_metric['ctl'] - prev_metric['ctl']) / prev_metric['ctl'] * 100) if prev_metric['ctl'] > 0 else 0
+    atl_change = ((last_metric['atl'] - prev_metric['atl']) / prev_metric['atl'] * 100) if prev_metric['atl'] > 0 else 0
+    tsb_change = ((last_metric['tsb'] - prev_metric['tsb']) / abs(prev_metric['tsb']) * 100) if prev_metric['tsb'] != 0 else 0
+    
+    # Símbolos de tendência
+    ctl_arrow = "📈" if ctl_change > 0 else "📉" if ctl_change < 0 else "➡️"
+    atl_arrow = "📈" if atl_change > 0 else "📉" if atl_change < 0 else "➡️"
+    tsb_arrow = "📈" if tsb_change > 0 else "📉" if tsb_change < 0 else "➡️"
+    
+    # Status baseado em valores (para amador bem treinado)
+    def get_ctl_status(ctl):
+        if ctl >= 50: return {"label": "Excelente", "color": "#28a745", "badge": "success"}
+        elif ctl >= 40: return {"label": "Bom", "color": "#17a2b8", "badge": "info"}
+        elif ctl >= 30: return {"label": "Moderado", "color": "#ffc107", "badge": "warning"}
+        else: return {"label": "Iniciante", "color": "#6c757d", "badge": "secondary"}
+    
+    def get_atl_status(atl):
+        if atl > 80: return {"label": "Atenção!", "color": "#dc3545", "badge": "danger"}
+        elif atl > 60: return {"label": "Alta", "color": "#fd7e14", "badge": "warning"}
+        elif atl > 40: return {"label": "Moderada", "color": "#ffc107", "badge": "warning"}
+        else: return {"label": "Baixa", "color": "#28a745", "badge": "success"}
+    
+    def get_tsb_status(tsb):
+        if tsb > 25: return {"label": "Descansado", "color": "#28a745", "badge": "success"}
+        elif tsb > 5: return {"label": "Fresco", "color": "#17a2b8", "badge": "info"}
+        elif tsb > -10: return {"label": "Ideal", "color": "#ffc107", "badge": "warning"}
+        else: return {"label": "Cansado", "color": "#dc3545", "badge": "danger"}
+    
+    ctl_status = get_ctl_status(last_metric['ctl'])
+    atl_status = get_atl_status(last_metric['atl'])
+    tsb_status = get_tsb_status(last_metric['tsb'])
+    
+    # Pegar últimos 7 dias para mini sparkline
+    last_7_metrics = metrics[-7:] if len(metrics) >= 7 else metrics
+    ctl_sparkline = [m['ctl'] for m in last_7_metrics]
+    atl_sparkline = [m['atl'] for m in last_7_metrics]
+    tsb_sparkline = [m['tsb'] for m in last_7_metrics]
+    
+    # Calcular resumo semanal uma vez
+    weekly_summary = calculate_weekly_summary()
+    
+    # Calcular progresso das metas
+    workouts = load_workouts()
+    config = load_config()
+    goals_progress = calculate_goals_progress(workouts, config)
+    
+    return dbc.Container([
+        # ============ STATUS ATUAL: ONDE VOCÊ ESTÁ ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("🎯 Status Atual", className="text-primary mb-2", style={'fontWeight': '700'}),
+                    html.P("Seu estado de forma física atual e tendências recentes", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-4")
+            ])
+        ], className="bg-light rounded-3 mb-5"),
 
-            st.plotly_chart(fig_dist, use_container_width=True)
-        # Fim do bloco if workouts
-        else:
-            st.info('Nenhum treino registrado na última semana.')
+        # Cards de métricas principais
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.Div([
+                                html.Div("💪", style={'fontSize': '2.5rem'}),
+                                dbc.Badge(ctl_status['label'], color=ctl_status['badge'], className="mb-2", style={'fontSize': '0.7rem'})
+                            ], className="mb-2"),
+                            html.H5("Fitness (CTL)", className="text-primary mb-2", style={'fontWeight': '600'}),
+                            html.H1(f"{last_metric['ctl']:.2f}", className="display-4 mb-2", style={'fontWeight': '800', 'color': ctl_status['color']}),
+                            html.P(f"{ctl_arrow} {ctl_change:+.2f}% vs semana anterior", className="text-muted mb-2 small"),
+                            # Mini sparkline
+                            dcc.Graph(
+                                figure=go.Figure(
+                                    data=[go.Scatter(
+                                        y=ctl_sparkline,
+                                        mode='lines',
+                                        line=dict(color=ctl_status['color'], width=2),
+                                        fill='tozeroy',
+                                        fillcolor=f"rgba({int(ctl_status['color'][1:3], 16)}, {int(ctl_status['color'][3:5], 16)}, {int(ctl_status['color'][5:7], 16)}, 0.2)"
+                                    )],
+                                    layout=go.Layout(
+                                        height=60,
+                                        margin=dict(l=0, r=0, t=0, b=0),
+                                        xaxis=dict(visible=False),
+                                        yaxis=dict(visible=False),
+                                        showlegend=False,
+                                        paper_bgcolor='rgba(0,0,0,0)',
+                                        plot_bgcolor='rgba(0,0,0,0)'
+                                    )
+                                ),
+                                config={'displayModeBar': False},
+                                style={'height': '60px'}
+                            )
+                        ], className="text-center")
+                    ])
+                ], className="mb-4 shadow-sm border-0 status-card", style={'borderRadius': '15px', 'background': 'white'})
+            ], md=4),
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.Div([
+                                html.Div("😴", style={'fontSize': '2.5rem'}),
+                                dbc.Badge(atl_status['label'], color=atl_status['badge'], className="mb-2", style={'fontSize': '0.7rem'})
+                            ], className="mb-2"),
+                            html.H5("Fadiga (ATL)", className="text-danger mb-2", style={'fontWeight': '600'}),
+                            html.H1(f"{last_metric['atl']:.2f}", className="display-4 mb-2", style={'fontWeight': '800', 'color': atl_status['color']}),
+                            html.P(f"{atl_arrow} {atl_change:+.2f}% vs semana anterior", className="text-muted mb-2 small"),
+                            # Mini sparkline
+                            dcc.Graph(
+                                figure=go.Figure(
+                                    data=[go.Scatter(
+                                        y=atl_sparkline,
+                                        mode='lines',
+                                        line=dict(color=atl_status['color'], width=2),
+                                        fill='tozeroy',
+                                        fillcolor=f"rgba({int(atl_status['color'][1:3], 16)}, {int(atl_status['color'][3:5], 16)}, {int(atl_status['color'][5:7], 16)}, 0.2)"
+                                    )],
+                                    layout=go.Layout(
+                                        height=60,
+                                        margin=dict(l=0, r=0, t=0, b=0),
+                                        xaxis=dict(visible=False),
+                                        yaxis=dict(visible=False),
+                                        showlegend=False,
+                                        paper_bgcolor='rgba(0,0,0,0)',
+                                        plot_bgcolor='rgba(0,0,0,0)'
+                                    )
+                                ),
+                                config={'displayModeBar': False},
+                                style={'height': '60px'}
+                            )
+                        ], className="text-center")
+                    ])
+                ], className="mb-4 shadow-sm border-0 status-card", style={'borderRadius': '15px', 'background': 'white'})
+            ], md=4),
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.Div([
+                                html.Div("⚖️", style={'fontSize': '2.5rem'}),
+                                dbc.Badge(tsb_status['label'], color=tsb_status['badge'], className="mb-2", style={'fontSize': '0.7rem'})
+                            ], className="mb-2"),
+                            html.H5("Forma (TSB)", className="text-success mb-2", style={'fontWeight': '600'}),
+                            html.H1(f"{last_metric['tsb']:.2f}", className="display-4 mb-2", style={'fontWeight': '800', 'color': tsb_status['color']}),
+                            html.P(f"{tsb_arrow} {tsb_change:+.2f}% vs semana anterior", className="text-muted mb-2 small"),
+                            # Mini sparkline
+                            dcc.Graph(
+                                figure=go.Figure(
+                                    data=[go.Scatter(
+                                        y=tsb_sparkline,
+                                        mode='lines',
+                                        line=dict(color=tsb_status['color'], width=2),
+                                        fill='tozeroy',
+                                        fillcolor=f"rgba({int(tsb_status['color'][1:3], 16)}, {int(tsb_status['color'][3:5], 16)}, {int(tsb_status['color'][5:7], 16)}, 0.2)" if tsb_status['color'].startswith('#') else 'rgba(40, 167, 69, 0.2)'
+                                    )],
+                                    layout=go.Layout(
+                                        height=60,
+                                        margin=dict(l=0, r=0, t=0, b=0),
+                                        xaxis=dict(visible=False),
+                                        yaxis=dict(visible=False),
+                                        showlegend=False,
+                                        paper_bgcolor='rgba(0,0,0,0)',
+                                        plot_bgcolor='rgba(0,0,0,0)'
+                                    )
+                                ),
+                                config={'displayModeBar': False},
+                                style={'height': '60px'}
+                            )
+                        ], className="text-center")
+                    ])
+                ], className="mb-4 shadow-sm border-0 status-card", style={'borderRadius': '15px', 'background': 'white'})
+            ], md=4)
+        ], className="mb-5"),
         
-        # ============ STATUS DE TREINAMENTO ============
-        st.markdown("### 📊 Status de Treinamento")
+        # ============ ALERTAS INTELIGENTES ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("🚨 Alertas Inteligentes", className="mb-3 text-danger", style={'fontWeight': '700'}),
+                    html.P("Recomendações personalizadas baseadas nas suas métricas", className="text-muted mb-4", style={'fontSize': '0.95rem'})
+                ], className="text-center")
+            ])
+        ]),
         
-        tsb_value = last_metric['tsb']
-        if tsb_value > 10:
-            status = "✅ Recuperado"
-            status_color = "#4caf50"
-            description = "Você está bem descansado, ótimo para treinos intensos!"
-        elif tsb_value >= -10:
-            status = "⚖️ Equilibrado"
-            status_color = "#ff9800"
-            description = "Bom equilíbrio entre forma e fadiga, continue assim!"
-        elif tsb_value >= -30:
-            status = "⚠️ Fadiga"
-            status_color = "#ff5722"
-            description = "Você está cansado, considere reduzir volume/intensidade."
-        else:
-            status = "🚫 Overtraining"
-            status_color = "#f44336"
-            description = "CUIDADO! Você precisa descansar para evitar lesões."
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    *[dbc.Alert([
+                        dbc.Row([
+                            dbc.Col([
+                                html.Div(alert['icon'], style={'fontSize': '2.5rem'}),
+                            ], width=2, className="text-center"),
+                            dbc.Col([
+                                html.H5(alert['title'], className="alert-heading mb-2", style={'fontWeight': '700'}),
+                                html.P(alert['message'], className="mb-1", style={'fontSize': '0.95rem'}),
+                                html.Hr(className="my-2"),
+                                html.P([
+                                    html.Strong("💡 Ação: "),
+                                    alert['action']
+                                ], className="mb-0 small", style={'fontStyle': 'italic'})
+                            ], width=10)
+                        ])
+                    ], color=alert['color'], className="shadow-sm", style={'borderRadius': '12px', 'borderLeft': f"5px solid var(--bs-{alert['color']})"}) 
+                    for alert in calculate_smart_alerts(metrics)],
+                    dbc.Alert([
+                        dbc.Row([
+                            dbc.Col([
+                                html.Div("ℹ️", style={'fontSize': '2.5rem'}),
+                            ], width=2, className="text-center"),
+                            dbc.Col([
+                                html.H5("Nenhum Alerta", className="alert-heading mb-1"),
+                                html.P("Suas métricas estão dentro dos parâmetros normais. Continue assim!", className="mb-0")
+                            ], width=10)
+                        ])
+                    ], color="light", className="shadow-sm", style={'borderRadius': '12px'}) if not calculate_smart_alerts(metrics) else None
+                ])
+            ])
+        ], className="mb-5"),
         
-        st.markdown(f"""
-        <div style='background: {status_color}20; padding: 15px; border-radius: 8px; border-left: 4px solid {status_color};'>
-            <h3 style='color: {status_color}; margin: 0;'>{status}</h3>
-            <p style='color: #333; margin: 5px 0;'>{description}</p>
-        </div>
-        """, unsafe_allow_html=True)
+        # ============ COMPARAÇÃO SEMANA ATUAL VS ANTERIOR ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("📊 Comparação Semanal", className="mb-3 text-info", style={'fontWeight': '700'}),
+                    html.P("Como suas métricas evoluíram na última semana", className="text-muted mb-4", style={'fontSize': '0.95rem'})
+                ], className="text-center")
+            ])
+        ]),
+        
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    *([
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Card([
+                                    dbc.CardBody([
+                                        html.Div([
+                                            html.H6("💪 CTL (Forma)", className="text-primary mb-3", style={'fontWeight': '600'}),
+                                            dbc.Row([
+                                                dbc.Col([
+                                                    html.Div("Semana Anterior", className="text-muted small mb-1"),
+                                                    html.H4(f"{comparison['ctl']['previous']:.2f}", className="text-secondary", style={'fontWeight': '700'})
+                                                ], width=6),
+                                                dbc.Col([
+                                                    html.Div("Semana Atual", className="text-muted small mb-1"),
+                                                    html.H4(f"{comparison['ctl']['current']:.2f}", className="text-primary", style={'fontWeight': '700'})
+                                                ], width=6)
+                                            ]),
+                                            html.Hr(className="my-2"),
+                                            dbc.Badge([
+                                                "↗️ " if comparison['ctl']['change'] > 0 else "↘️ " if comparison['ctl']['change'] < 0 else "➡️ ",
+                                                f"{comparison['ctl']['change']:+.2f} pts ({comparison['ctl']['change_pct']:+.1f}%)"
+                                            ], color="success" if comparison['ctl']['change'] > 0 else "danger" if comparison['ctl']['change'] < 0 else "secondary", 
+                                            className="w-100 p-2", style={'fontSize': '0.9rem'})
+                                        ])
+                                    ])
+                                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px'})
+                            ], md=4),
+                            dbc.Col([
+                                dbc.Card([
+                                    dbc.CardBody([
+                                        html.Div([
+                                            html.H6("😴 ATL (Fadiga)", className="text-danger mb-3", style={'fontWeight': '600'}),
+                                            dbc.Row([
+                                                dbc.Col([
+                                                    html.Div("Semana Anterior", className="text-muted small mb-1"),
+                                                    html.H4(f"{comparison['atl']['previous']:.2f}", className="text-secondary", style={'fontWeight': '700'})
+                                                ], width=6),
+                                                dbc.Col([
+                                                    html.Div("Semana Atual", className="text-muted small mb-1"),
+                                                    html.H4(f"{comparison['atl']['current']:.2f}", className="text-danger", style={'fontWeight': '700'})
+                                                ], width=6)
+                                            ]),
+                                            html.Hr(className="my-2"),
+                                            dbc.Badge([
+                                                "↗️ " if comparison['atl']['change'] > 0 else "↘️ " if comparison['atl']['change'] < 0 else "➡️ ",
+                                                f"{comparison['atl']['change']:+.2f} pts ({comparison['atl']['change_pct']:+.1f}%)"
+                                            ], color="warning" if comparison['atl']['change'] > 0 else "success" if comparison['atl']['change'] < 0 else "secondary",
+                                            className="w-100 p-2", style={'fontSize': '0.9rem'})
+                                        ])
+                                    ])
+                                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px'})
+                            ], md=4),
+                            dbc.Col([
+                                dbc.Card([
+                                    dbc.CardBody([
+                                        html.Div([
+                                            html.H6("⚖️ TSB (Equilíbrio)", className="text-success mb-3", style={'fontWeight': '600'}),
+                                            dbc.Row([
+                                                dbc.Col([
+                                                    html.Div("Semana Anterior", className="text-muted small mb-1"),
+                                                    html.H4(f"{comparison['tsb']['previous']:.2f}", className="text-secondary", style={'fontWeight': '700'})
+                                                ], width=6),
+                                                dbc.Col([
+                                                    html.Div("Semana Atual", className="text-muted small mb-1"),
+                                                    html.H4(f"{comparison['tsb']['current']:.2f}", className="text-success", style={'fontWeight': '700'})
+                                                ], width=6)
+                                            ]),
+                                            html.Hr(className="my-2"),
+                                            dbc.Badge([
+                                                "↗️ " if comparison['tsb']['change'] > 0 else "↘️ " if comparison['tsb']['change'] < 0 else "➡️ ",
+                                                f"{comparison['tsb']['change']:+.2f} pts ({comparison['tsb']['change_pct']:+.1f}%)"
+                                            ], color="success" if comparison['tsb']['change'] > 0 else "warning" if comparison['tsb']['change'] < 0 else "secondary",
+                                            className="w-100 p-2", style={'fontSize': '0.9rem'})
+                                        ])
+                                    ])
+                                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px'})
+                            ], md=4)
+                        ], className="mb-4")
+                    ] if (comparison := calculate_period_comparison(metrics)) else [
+                        dbc.Alert([
+                            html.H5("📊 Dados Insuficientes", className="alert-heading mb-2"),
+                            html.P("Precisamos de pelo menos 14 dias de dados para comparar períodos.", className="mb-0")
+                        ], color="info", className="shadow-sm", style={'borderRadius': '12px'})
+                    ])
+                ])
+            ])
+        ], className="mb-5"),
+        
+        # ============ RECORDES PESSOAIS ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("🏆 Recordes Pessoais", className="mb-3 text-warning", style={'fontWeight': '700'}),
+                    html.P("Seus melhores resultados e conquistas", className="text-muted mb-4", style={'fontSize': '0.95rem'})
+                ], className="text-center")
+            ])
+        ]),
+        
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    *([
+                        dbc.Row([
+                            *[dbc.Col([
+                                dbc.Card([
+                                    dbc.CardBody([
+                                        html.Div([
+                                            html.Div(record['icon'], style={'fontSize': '2.5rem'}, className="mb-2"),
+                                            html.H6(record['label'], className="text-muted mb-2", style={'fontSize': '0.8rem', 'fontWeight': '600'}),
+                                            html.H3([
+                                                f"{record['value']:.2f}" if record['unit'] in ['pts', 'h'] else f"{record['value']:.1f}",
+                                                html.Small(f" {record['unit']}", className="text-muted", style={'fontSize': '0.6em'})
+                                            ], className="mb-2", style={'fontWeight': '800'}),
+                                            html.Div([
+                                                html.Small(f"📅 {record['date']}", className="text-muted d-block", style={'fontSize': '0.75rem'}),
+                                                html.Small(record.get('activity', ''), className="text-primary d-block mt-1", style={'fontSize': '0.7rem', 'fontWeight': '500'}) if 'activity' in record else None
+                                            ])
+                                        ], className="text-center")
+                                    ])
+                                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'background': 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)', 'borderTop': '4px solid #ffc107'})
+                            ], md=2) for record in calculate_personal_records(metrics, workouts).values()]
+                        ], className="mb-4") if calculate_personal_records(metrics, workouts) else None
+                    ] if workouts else [
+                        dbc.Alert([
+                            html.H5("🏆 Sem Recordes Ainda", className="alert-heading mb-2"),
+                            html.P("Continue treinando para estabelecer seus recordes pessoais!", className="mb-0")
+                        ], color="light", className="shadow-sm", style={'borderRadius': '12px'})
+                    ])
+                ])
+            ])
+        ], className="mb-5"),
+        
+        # Separador visual
+        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
+        
+        # ============ OBJETIVOS: PARA ONDE VOCÊ VAI ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("🎯 Objetivos", className="text-success mb-2", style={'fontWeight': '700'}),
+                    html.P("Seus objetivos de treinamento e progresso atual", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-3")
+            ])
+        ], className="bg-light rounded-3 mb-4"),
+        
+        # Carregar dados para calcular progresso
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("📅 Progresso Semanal", className="mb-2 text-primary", style={'fontWeight': '700'}),
+                    html.Div(style={'width': '60px', 'height': '4px', 'background': 'linear-gradient(90deg, #667eea, #764ba2)', 'margin': '0 auto 1rem', 'borderRadius': '2px'})
+                ], className="text-center"),
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.Div([
+                                    html.Div("🏃", className="mb-2", style={'fontSize': '2rem'}),
+                                    html.H6("Distância", className="card-title mb-2", style={'fontWeight': '600'}),
+                                    dbc.Progress(value=min(100, (goals_progress['weekly']['distance'] / config.get('weekly_distance_goal', 50.0) * 100) if config.get('weekly_distance_goal', 50.0) > 0 else 0), className="mt-2 mb-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['weekly']['distance'] >= config.get('weekly_distance_goal', 50.0) else "primary", animated=True, striped=True),
+                                    html.Small(f"{goals_progress['weekly']['distance']:.1f}km / {config.get('weekly_distance_goal', 50.0):.1f}km ({min(100, goals_progress['weekly']['distance'] / config.get('weekly_distance_goal', 50.0) * 100 if config.get('weekly_distance_goal', 50.0) > 0 else 0):.0f}%)", className="text-muted")
+                                ], className="text-center")
+                            ])
+                        ], className="mb-3 shadow-sm border-0", style={'borderRadius': '12px'})
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.Div([
+                                    html.Div("🎯", className="mb-2", style={'fontSize': '2rem'}),
+                                    html.H6("TSS", className="card-title mb-2", style={'fontWeight': '600'}),
+                                    dbc.Progress(value=min(100, (goals_progress['weekly']['tss'] / config.get('weekly_tss_goal', 300) * 100) if config.get('weekly_tss_goal', 300) > 0 else 0), className="mt-2 mb-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['weekly']['tss'] >= config.get('weekly_tss_goal', 300) else "primary", animated=True, striped=True),
+                                    html.Small(f"{goals_progress['weekly']['tss']:.0f} / {config.get('weekly_tss_goal', 300)} ({min(100, goals_progress['weekly']['tss'] / config.get('weekly_tss_goal', 300) * 100 if config.get('weekly_tss_goal', 300) > 0 else 0):.0f}%)", className="text-muted")
+                                ], className="text-center")
+                            ])
+                        ], className="mb-3 shadow-sm border-0", style={'borderRadius': '12px'})
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.Div([
+                                    html.Div("⏱️", className="mb-2", style={'fontSize': '2rem'}),
+                                    html.H6("Horas", className="card-title mb-2", style={'fontWeight': '600'}),
+                                    dbc.Progress(value=min(100, (goals_progress['weekly']['hours'] / config.get('weekly_hours_goal', 10.0) * 100) if config.get('weekly_hours_goal', 10.0) > 0 else 0), className="mt-2 mb-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['weekly']['hours'] >= config.get('weekly_hours_goal', 10.0) else "primary", animated=True, striped=True),
+                                    html.Small(f"{format_hours_to_hms(goals_progress['weekly']['hours'])} / {format_hours_to_hms(config.get('weekly_hours_goal', 10.0))} ({min(100, goals_progress['weekly']['hours'] / config.get('weekly_hours_goal', 10.0) * 100 if config.get('weekly_hours_goal', 10.0) > 0 else 0):.0f}%)", className="text-muted")
+                                ], className="text-center")
+                            ])
+                        ], className="mb-3 shadow-sm border-0", style={'borderRadius': '12px'})
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.Div([
+                                    html.Div("📊", className="mb-2", style={'fontSize': '2rem'}),
+                                    html.H6("Atividades", className="card-title mb-2", style={'fontWeight': '600'}),
+                                    dbc.Progress(value=min(100, (goals_progress['weekly']['activities'] / config.get('weekly_activities_goal', 5) * 100) if config.get('weekly_activities_goal', 5) > 0 else 0), className="mt-2 mb-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['weekly']['activities'] >= config.get('weekly_activities_goal', 5) else "primary", animated=True, striped=True),
+                                    html.Small(f"{goals_progress['weekly']['activities']} / {config.get('weekly_activities_goal', 5)} ({min(100, goals_progress['weekly']['activities'] / config.get('weekly_activities_goal', 5) * 100 if config.get('weekly_activities_goal', 5) > 0 else 0):.0f}%)", className="text-muted")
+                                ], className="text-center")
+                            ])
+                        ], className="mb-3 shadow-sm border-0", style={'borderRadius': '12px'})
+                    ], md=3)
+                ])
+            ])
+        ], className="mb-4"),
+        
+        # Progresso mensal
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("📊 Progresso Mensal", className="mb-2 text-success", style={'fontWeight': '700'}),
+                    html.Div(style={'width': '60px', 'height': '4px', 'background': 'linear-gradient(90deg, #11998e, #38ef7d)', 'margin': '0 auto 1rem', 'borderRadius': '2px'})
+                ], className="text-center"),
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("🏃 Distância", className="card-title"),
+                                html.Div([
+                                    html.Div("Progresso mensal de distância", className="text-muted small"),
+                                    dbc.Progress(value=min(100, (goals_progress['monthly']['distance'] / config.get('monthly_distance_goal', 200.0) * 100) if config.get('monthly_distance_goal', 200.0) > 0 else 0), className="mt-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['monthly']['distance'] >= config.get('monthly_distance_goal', 200.0) else "primary", animated=True, striped=True),
+                                    html.Small(f"{goals_progress['monthly']['distance']:.1f}km / {config.get('monthly_distance_goal', 200.0):.0f}km ({min(100, goals_progress['monthly']['distance'] / config.get('monthly_distance_goal', 200.0) * 100 if config.get('monthly_distance_goal', 200.0) > 0 else 0):.0f}%)", className="text-muted")
+                                ])
+                            ])
+                        ], className="mb-3")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("🎯 TSS", className="card-title"),
+                                html.Div([
+                                    html.Div("Training Stress Score mensal", className="text-muted small"),
+                                    dbc.Progress(value=min(100, (goals_progress['monthly']['tss'] / config.get('monthly_tss_goal', 1200) * 100) if config.get('monthly_tss_goal', 1200) > 0 else 0), className="mt-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['monthly']['tss'] >= config.get('monthly_tss_goal', 1200) else "primary", animated=True, striped=True),
+                                    html.Small(f"{goals_progress['monthly']['tss']:.0f} / {config.get('monthly_tss_goal', 1200)} ({min(100, goals_progress['monthly']['tss'] / config.get('monthly_tss_goal', 1200) * 100 if config.get('monthly_tss_goal', 1200) > 0 else 0):.0f}%)", className="text-muted")
+                                ])
+                            ])
+                        ], className="mb-3")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("⏱️ Horas", className="card-title"),
+                                html.Div([
+                                    html.Div("Horas de treinamento mensal", className="text-muted small"),
+                                    dbc.Progress(value=min(100, (goals_progress['monthly']['hours'] / config.get('monthly_hours_goal', 40.0) * 100) if config.get('monthly_hours_goal', 40.0) > 0 else 0), className="mt-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['monthly']['hours'] >= config.get('monthly_hours_goal', 40.0) else "primary", animated=True, striped=True),
+                                    html.Small(f"{format_hours_to_hms(goals_progress['monthly']['hours'])} / {format_hours_to_hms(config.get('monthly_hours_goal', 40.0))} ({min(100, goals_progress['monthly']['hours'] / config.get('monthly_hours_goal', 40.0) * 100 if config.get('monthly_hours_goal', 40.0) > 0 else 0):.0f}%)", className="text-muted")
+                                ])
+                            ])
+                        ], className="mb-3")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("📊 Atividades", className="card-title"),
+                                html.Div([
+                                    html.Div("Número de treinos mensal", className="text-muted small"),
+                                    dbc.Progress(value=min(100, (goals_progress['monthly']['activities'] / config.get('monthly_activities_goal', 20) * 100) if config.get('monthly_activities_goal', 20) > 0 else 0), className="mt-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['monthly']['activities'] >= config.get('monthly_activities_goal', 20) else "primary", animated=True, striped=True),
+                                    html.Small(f"{goals_progress['monthly']['activities']} / {config.get('monthly_activities_goal', 20)} ({min(100, goals_progress['monthly']['activities'] / config.get('monthly_activities_goal', 20) * 100 if config.get('monthly_activities_goal', 20) > 0 else 0):.0f}%)", className="text-muted")
+                                ])
+                            ])
+                        ], className="mb-3")
+                    ], md=3)
+                ])
+            ])
+        ]),
+        
+        # Metas de performance
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("🏆 Metas de Performance", className="mb-2 text-warning", style={'fontWeight': '700'}),
+                    html.Div(style={'width': '60px', 'height': '4px', 'background': 'linear-gradient(90deg, #f093fb, #f5576c)', 'margin': '0 auto 1rem', 'borderRadius': '2px'})
+                ], className="text-center"),
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("✅ CTL vs Alvo", className="card-title"),
+                                html.Div([
+                                    html.Div("Forma física atual vs objetivo", className="text-muted small"),
+                                    dbc.Progress(
+                                        value=min(100, (last_metric['ctl'] / config.get('ctl_target', 50.0) * 100) if config.get('ctl_target', 50.0) > 0 else 0), 
+                                        className="mt-2 progress-animated", 
+                                        style={'height': '12px'}, 
+                                        color="success" if last_metric['ctl'] >= config.get('ctl_target', 50.0) else "info", 
+                                        animated=True, 
+                                        striped=True
+                                    ),
+                                    html.Small(f"{last_metric['ctl']:.2f} / {config.get('ctl_target', 50.0):.0f} ({min(100, last_metric['ctl'] / config.get('ctl_target', 50.0) * 100 if config.get('ctl_target', 50.0) > 0 else 0):.0f}%)", className="text-muted")
+                                ])
+                            ])
+                        ], className="mb-3")
+                    ], md=6),
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("⚠️ ATL vs Máximo", className="card-title"),
+                                html.Div([
+                                    html.Div("Fadiga vs limite recomendado", className="text-muted small"),
+                                    dbc.Progress(
+                                        value=min(100, (last_metric['atl'] / config.get('atl_max', 80.0) * 100) if config.get('atl_max', 80.0) > 0 else 0), 
+                                        className="mt-2 progress-animated", 
+                                        style={'height': '12px'}, 
+                                        color="danger" if last_metric['atl'] >= config.get('atl_max', 80.0) else "warning", 
+                                        animated=True, 
+                                        striped=True
+                                    ),
+                                    html.Small(f"{last_metric['atl']:.2f} / {config.get('atl_max', 80.0):.0f} ({min(100, last_metric['atl'] / config.get('atl_max', 80.0) * 100 if config.get('atl_max', 80.0) > 0 else 0):.0f}%)", className="text-muted")
+                                ])
+                            ])
+                        ], className="mb-3")
+                    ], md=6)
+                ])
+            ])
+        ]),
+        # Separador visual com gradiente
+        html.Div([
+            html.Hr(style={
+                'border': 'none',
+                'height': '3px',
+                'background': 'linear-gradient(90deg, transparent, #667eea, #764ba2, transparent)',
+                'margin': '4rem 0',
+                'borderRadius': '3px'
+            })
+        ]),
+        
+        # ============ TREINAMENTO: COMO CHEGAR LÁ ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("🏃 Treinamento", className="text-warning mb-2", style={'fontWeight': '700'}),
+                    html.P("Suas zonas de intensidade e atividade semanal", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-3")
+            ])
+        ], className="bg-light rounded-3 mb-4"),
+
+        # Zonas de intensidade
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader([
+                        html.H5("🏃‍♂️ Zonas de Corrida (pace)", className="mb-0 text-primary", style={'fontWeight': '600'})
+                    ]),
+                    dbc.CardBody([
+                        dbc.Table([
+                            html.Thead([
+                                html.Tr([html.Th("Zona"), html.Th("Pace"), html.Th("Descrição")])
+                            ]),
+                            html.Tbody([
+                                html.Tr([html.Td(html.B("Z1")), html.Td("> 6:00"), html.Td("Recuperação")]),
+                                html.Tr([html.Td(html.B("Z2")), html.Td("5:30-6:00"), html.Td("Endurance")]),
+                                html.Tr([html.Td(html.B("Z3")), html.Td("5:00-5:30"), html.Td("Tempo")]),
+                                html.Tr([html.Td(html.B("Z4")), html.Td("4:40-5:00"), html.Td("Limiar")]),
+                                html.Tr([html.Td(html.B("Z5a")), html.Td("4:30-4:40"), html.Td("VO2max (a)")]),
+                                html.Tr([html.Td(html.B("Z5b")), html.Td("4:15-4:30"), html.Td("VO2max (b)")]),
+                                html.Tr([html.Td(html.B("Z5c")), html.Td("< 4:15"), html.Td("Sprint")])
+                            ])
+                        ], striped=True, bordered=True, hover=True, responsive=True, size="sm", className="mb-0")
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ], md=6),
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader([
+                        html.H5("🚴‍♂️ Zonas de Ciclismo (W)", className="mb-0 text-success", style={'fontWeight': '600'})
+                    ]),
+                    dbc.CardBody([
+                        dbc.Table([
+                            html.Thead([
+                                html.Tr([html.Th("Zona"), html.Th("Watts"), html.Th("Descrição")])
+                            ]),
+                            html.Tbody([
+                                html.Tr([html.Td(html.B("Z1")), html.Td("0-150"), html.Td("Recuperação")]),
+                                html.Tr([html.Td(html.B("Z2")), html.Td("151-195"), html.Td("Endurance")]),
+                                html.Tr([html.Td(html.B("Z3")), html.Td("196-234"), html.Td("Tempo")]),
+                                html.Tr([html.Td(html.B("Z4")), html.Td("235-260"), html.Td("Limiar")]),
+                                html.Tr([html.Td(html.B("Z5")), html.Td("261-312"), html.Td("VO2max")]),
+                                html.Tr([html.Td(html.B("Z6")), html.Td("> 312"), html.Td("Anaeróbio")])
+                            ])
+                        ], striped=True, bordered=True, hover=True, responsive=True, size="sm", className="mb-0")
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ], md=6)
+        ], className="mb-4"),
+
+        # Resumo semanal
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("📊 Resumo Semanal", className="mb-2", style={'fontWeight': '700'}),
+                    html.Div(style={'width': '60px', 'height': '4px', 'background': 'linear-gradient(90deg, #4facfe, #00f2fe)', 'margin': '0 auto 0.5rem', 'borderRadius': '2px'}),
+                    html.P(f"Semana atual: {weekly_summary['period']}", className="text-muted mb-4")
+                ], className="text-center")
+            ])
+        ], className="mb-3"),
+
+        # Cards do resumo semanal
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.Div([
+                                html.Div("⏱️", style={'fontSize': '2rem'}),
+                                dbc.Badge(f"{weekly_summary['activities']} treinos", color="primary", className="mb-2", style={'fontSize': '0.65rem'})
+                            ], className="mb-2"),
+                            html.H6("Horas Completadas", className="text-muted mb-2", style={'fontWeight': '600', 'fontSize': '0.85rem'}),
+                            html.H3(f"{weekly_summary['hours_formatted']}", className="text-primary mb-1", style={'fontWeight': '700'}),
+                            html.Small(f"Meta: {format_hours_to_hms(config.get('weekly_hours_goal', 10.0))}", className="text-muted", style={'fontSize': '0.7rem'})
+                        ], className="text-center")
+                    ])
+                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'borderTop': '4px solid #2196F3'})
+            ], md=3),
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.Div([
+                                html.Div("🎯", style={'fontSize': '2rem'}),
+                                dbc.Badge(f"{(weekly_summary['tss']/config.get('weekly_tss_goal', 300)*100):.0f}% da meta" if config.get('weekly_tss_goal', 300) > 0 else "0%", 
+                                         color="success" if weekly_summary['tss'] >= config.get('weekly_tss_goal', 300) else "warning", 
+                                         className="mb-2", style={'fontSize': '0.65rem'})
+                            ], className="mb-2"),
+                            html.H6("TSS Total", className="text-muted mb-2", style={'fontWeight': '600', 'fontSize': '0.85rem'}),
+                            html.H3(f"{weekly_summary['tss']:.0f}", className="text-warning mb-1", style={'fontWeight': '700'}),
+                            html.Small(f"Meta: {config.get('weekly_tss_goal', 300)}", className="text-muted", style={'fontSize': '0.7rem'})
+                        ], className="text-center")
+                    ])
+                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'borderTop': '4px solid #ffc107'})
+            ], md=3),
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.Div([
+                                html.Div("🏃", style={'fontSize': '2rem'}),
+                                dbc.Badge(f"{(weekly_summary['activities']/config.get('weekly_activities_goal', 5)*100):.0f}% da meta" if config.get('weekly_activities_goal', 5) > 0 else "0%",
+                                         color="success" if weekly_summary['activities'] >= config.get('weekly_activities_goal', 5) else "warning",
+                                         className="mb-2", style={'fontSize': '0.65rem'})
+                            ], className="mb-2"),
+                            html.H6("Atividades", className="text-muted mb-2", style={'fontWeight': '600', 'fontSize': '0.85rem'}),
+                            html.H3(f"{weekly_summary['activities']}", className="text-success mb-1", style={'fontWeight': '700'}),
+                            html.Small(f"Meta: {config.get('weekly_activities_goal', 5)}", className="text-muted", style={'fontSize': '0.7rem'})
+                        ], className="text-center")
+                    ])
+                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'borderTop': '4px solid #28a745'})
+            ], md=3),
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.Div([
+                            html.Div([
+                                html.Div("📏", style={'fontSize': '2rem'}),
+                                dbc.Badge(f"{(weekly_summary['distance']/config.get('weekly_distance_goal', 50.0)*100):.0f}% da meta" if config.get('weekly_distance_goal', 50.0) > 0 else "0%",
+                                         color="success" if weekly_summary['distance'] >= config.get('weekly_distance_goal', 50.0) else "warning",
+                                         className="mb-2", style={'fontSize': '0.65rem'})
+                            ], className="mb-2"),
+                            html.H6("Distância", className="text-muted mb-2", style={'fontWeight': '600', 'fontSize': '0.85rem'}),
+                            html.H3(f"{weekly_summary['distance']:.1f}km", className="text-danger mb-1", style={'fontWeight': '700'}),
+                            html.Small(f"Meta: {config.get('weekly_distance_goal', 50.0):.0f}km", className="text-muted", style={'fontSize': '0.7rem'})
+                        ], className="text-center")
+                    ])
+                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'borderTop': '4px solid #dc3545'})
+            ], md=3)
+        ], className="mb-4"),
+
+        # Gráfico semanal
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H4("📈 Treinos da Semana", className="mb-2", style={'fontWeight': '700'}),
+                    html.Div(style={'width': '50px', 'height': '3px', 'background': 'linear-gradient(90deg, #667eea, #764ba2)', 'marginBottom': '1rem', 'borderRadius': '2px'})
+                ]),
+                dcc.Graph(
+                    figure=create_weekly_chart(),
+                    style={'height': '400px', 'width': '100%'},
+                    config={'displayModeBar': False, 'responsive': True}
+                )
+            ], md=12, style={'padding': '0 15px'})
+        ], className="mb-4"),
+
+        # Distribuição por tipo
+        dbc.Row([
+            dbc.Col([
+                html.H4("🥧 Distribuição dos Tipos de Treino", className="mb-3"),
+                dcc.Graph(
+                    figure=create_distribution_chart(),
+                    style={'height': '350px'},
+                    config={'displayModeBar': False}
+                )
+            ])
+        ]),
+
+        # Status de treinamento
+        dbc.Row([
+            dbc.Col([
+                html.H4("📊 Status de Treinamento", className="mb-3"),
+                dbc.Alert([
+                    html.H5("✅ Recuperado", className="alert-heading"),
+                    html.P("Você está bem descansado, ótimo para treinos intensos!", className="mb-0")
+                ], color="success", className="mb-4")
+            ])
+        ]),
+
+# Separador visual
+        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
         
         # ============ ANÁLISE: ENTENDENDO SUA JORNADA ============
-        st.markdown("## 📈 Análise: Entendendo Sua Jornada")
-        st.markdown("*Tendências históricas e evolução do seu treinamento*")
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("📈 Análise", className="text-info mb-2", style={'fontWeight': '700'}),
+                    html.P("Tendências históricas e evolução do seu treinamento", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-3")
+            ])
+        ], className="bg-light rounded-3 mb-4"),
 
+        # Gráfico de análise completa
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        dcc.Graph(
+                            figure=create_metrics_chart(metrics),
+                            style={'height': '1000px'},
+                            config={'displayModeBar': False}
+                        )
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ])
+        ], className="mb-4"),
+        
+        # ============ CONQUISTAS GAMIFICADAS ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("🎮 Conquistas Desbloqueadas", className="mb-3 text-success", style={'fontWeight': '700'}),
+                    html.P("Acompanhe seu progresso e desbloqueie badges especiais", className="text-muted mb-4", style={'fontSize': '0.95rem'})
+                ], className="text-center")
+            ])
+        ]),
+        
+        dbc.Row([
+            dbc.Col([
+                dbc.Row([
+                    *[dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.Div([
+                                    html.Div(achievement['icon'], 
+                                            style={'fontSize': '3rem', 
+                                                   'opacity': '1' if achievement['unlocked'] else '0.3',
+                                                   'filter': 'none' if achievement['unlocked'] else 'grayscale(100%)'},
+                                            className="mb-2"),
+                                    html.H6(achievement['title'], 
+                                           className="mb-2",
+                                           style={'fontWeight': '700', 
+                                                  'color': '#28a745' if achievement['unlocked'] else '#6c757d'}),
+                                    html.P(achievement['description'], 
+                                          className="small text-muted mb-3",
+                                          style={'fontSize': '0.8rem', 'minHeight': '40px'}),
+                                    dbc.Progress(
+                                        value=achievement['progress'],
+                                        color=achievement['color'],
+                                        className="mb-2",
+                                        style={'height': '8px'},
+                                        striped=not achievement['unlocked'],
+                                        animated=not achievement['unlocked']
+                                    ),
+                                    html.Small(f"{achievement['progress']}%", 
+                                              className="text-muted",
+                                              style={'fontSize': '0.7rem'})
+                                ], className="text-center")
+                            ])
+                        ], className="shadow-sm border-0 h-100", 
+                           style={'borderRadius': '12px',
+                                  'background': 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)' if not achievement['unlocked'] 
+                                              else 'linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%)',
+                                  'borderTop': f"4px solid {'#28a745' if achievement['unlocked'] else '#6c757d'}"})
+                    ], md=2, className="mb-3") for achievement in calculate_achievements(metrics, workouts)]
+                ])
+            ])
+        ], className="mb-5"),
+        
+        # ============ TENDÊNCIA MENSAL ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("📊 Evolução Mensal", className="mb-3 text-primary", style={'fontWeight': '700'}),
+                    html.P("Visualize a distribuição de treinos e evolução do CTL nos últimos 6 meses", className="text-muted mb-4", style={'fontSize': '0.95rem'})
+                ], className="text-center")
+            ])
+        ]),
+        
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        dcc.Graph(
+                            figure=create_monthly_trend_chart(metrics, workouts),
+                            config={'displayModeBar': False}
+                        )
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ])
+        ], className="mb-4"),
+
+        # Separador visual
+        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
+        
+        # ============ PREVISÕES E RECOMENDAÇÕES ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("🔮 Previsões & Recomendações", className="text-purple mb-2", style={'fontWeight': '700', 'color': '#6f42c1'}),
+                    html.P("Insights baseados nas suas tendências de treinamento", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-3")
+            ])
+        ], className="bg-light rounded-3 mb-4"),
+        
+        dbc.Row([
+            dbc.Col([
+                dbc.Row([
+                    *[dbc.Col([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.Div([
+                                    html.Div(pred['icon'], style={'fontSize': '2.5rem'}, className="mb-2"),
+                                    html.H5(pred['title'], className="mb-3", style={'fontWeight': '700', 'color': '#6f42c1'}),
+                                    html.P(pred['prediction'], className="mb-2", style={'fontSize': '0.95rem', 'fontWeight': '500'}),
+                                    html.Hr(className="my-2") if 'reason' in pred else None,
+                                    html.P([
+                                        html.Strong("💡 "),
+                                        pred.get('reason', '')
+                                    ], className="small text-muted mb-2") if 'reason' in pred else None,
+                                    html.Div([
+                                        dbc.Badge([
+                                            "📅 " + pred.get('date', '') if 'date' in pred else "",
+                                        ], color="light", className="me-2") if 'date' in pred else None,
+                                        dbc.Badge([
+                                            "🎯 Confiança: " + pred.get('confidence', 'média').capitalize()
+                                        ], color={'alta': 'success', 'média': 'info', 'baixa': 'warning'}.get(pred.get('confidence', 'média'), 'info'))
+                                    ], className="mt-2")
+                                ], className="text-center")
+                            ])
+                        ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'borderTop': '4px solid #6f42c1'})
+                    ], md=4, className="mb-3") for pred in generate_predictions(metrics, config)]
+                ])
+            ])
+        ], className="mb-4"),
+        
+        # Botões de exportação
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H5("📥 Exportar Dados", className="mb-3", style={'fontWeight': '600'}),
+                    dbc.ButtonGroup([
+                        dbc.Button([
+                            "📊 Exportar Métricas (CSV)",
+                        ], id="btn-export-metrics", color="primary", className="me-2"),
+                        dbc.Button([
+                            "🏃 Exportar Atividades (CSV)",
+                        ], id="btn-export-workouts", color="success"),
+                    ])
+                ], className="text-center p-4", style={'background': '#f8f9fa', 'borderRadius': '12px'})
+            ])
+        ], className="mb-5"),
+        
+        # Download components (hidden)
+        dcc.Download(id="download-metrics"),
+        dcc.Download(id="download-workouts"),
+
+        # Separador visual
+        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
+        
+        # ============ REFERÊNCIAS PARA IRONMAN ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("🎯 Referências", className="text-danger mb-2", style={'fontWeight': '700'}),
+                    html.P("Valores de referência para provas de Ironman", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-3")
+            ])
+        ], className="bg-light rounded-3 mb-4"),
+
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        dbc.Accordion([
+                            dbc.AccordionItem([
+                                dbc.Row([
+                                    dbc.Col([
+                                        html.H5("8 semanas antes da prova", className="text-primary", style={'fontWeight': '600'}),
+                                        html.Ul([
+                                            html.Li("💪 Forma Física (CTL): ~50"),
+                                            html.Li("😴 Fadiga (ATL): ~25"),
+                                            html.Li("⚖️ Equilíbrio (TSB): ~25")
+                                        ], className="mb-3")
+                                    ], md=6),
+                                    dbc.Col([
+                                        html.H5("2 semanas antes da prova", className="text-warning", style={'fontWeight': '600'}),
+                                        html.Ul([
+                                            html.Li("💪 Forma Física (CTL): ~80"),
+                                            html.Li("😴 Fadiga (ATL): ~40"),
+                                            html.Li("⚖️ Equilíbrio (TSB): ~40")
+                                        ], className="mb-3")
+                                    ], md=6)
+                                ]),
+                                dbc.Row([
+                                    dbc.Col([
+                                        html.H5("Semana da prova", className="text-success", style={'fontWeight': '600'}),
+                                        html.Ul([
+                                            html.Li("💪 Forma Física (CTL): ~90"),
+                                            html.Li("😴 Fadiga (ATL): ~45"),
+                                            html.Li("⚖️ Equilíbrio (TSB): ~45")
+                                        ], className="mb-3")
+                                    ], md=6),
+                                    dbc.Col([
+                                        html.H5("📊 Valores atuais", className="text-info", style={'fontWeight': '600'}),
+                                        html.Ul([
+                                            html.Li(f"💪 CTL: {last_metric['ctl']:.2f}"),
+                                            html.Li(f"😴 ATL: {last_metric['atl']:.2f}"),
+                                            html.Li(f"⚖️ TSB: {last_metric['tsb']:.2f}")
+                                        ], className="mb-3")
+                                    ], md=6)
+                                ])
+                            ], title="🎯 Referências para Amador Bem Treinado - Meio Ironman")
+                        ], start_collapsed=True)
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ])
+        ], className="mb-4"),
+
+        # Separador visual
+        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
+        
+        # ============ APRENDIZADO: ENTENDA MELHOR ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("📚 Aprendizado", className="text-secondary mb-2", style={'fontWeight': '700'}),
+                    html.P("Informações educacionais e referências para otimizar seu treinamento", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-3")
+            ])
+        ], className="bg-light rounded-3 mb-4"),
+
+        dbc.Row([
+            dbc.Col([
+                dbc.Accordion([
+                    dbc.AccordionItem([
+                        dbc.Row([
+                            dbc.Col([
+                                html.H5("💪 CTL (Forma Física Crônica)"),
+                                html.P("Representa sua forma física geral, construída ao longo de ~6 semanas. Valores mais altos = você está mais preparado para provas longas. Para amador bem treinado em Ironman: ideal 50-90"),
+                                html.H5("😴 ATL (Fadiga Aguda)"),
+                                html.P("Mostra a fadiga recente (últimos 7 dias). Valores altos = você precisa de descanso. Idealmente ATL < CTL para evitar overtraining.")
+                            ], md=6),
+                            dbc.Col([
+                                html.H5("⚖️ TSB (Equilíbrio de Treino)"),
+                                html.P("Diferença entre CTL e ATL: TSB = CTL - ATL. Positivo = recuperação (bom para treinar duro). Negativo = fadiga (precisa descansar). É como um 'saldo' de energia.")
+                            ], md=6)
+                        ])
+                    ], title="📚 O que significa cada métrica?")
+                ], start_collapsed=True)
+            ])
+        ], className="mb-4"),
+
+        # Separador visual com gradiente
+        html.Div([
+            html.Hr(style={
+                'border': 'none',
+                'height': '3px',
+                'background': 'linear-gradient(90deg, transparent, #43e97b, #38f9d7, transparent)',
+                'margin': '4rem 0',
+                'borderRadius': '3px'
+            })
+        ]),
+
+        # ============ ÚLTIMAS ATIVIDADES ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("📋 Atividades", className="text-success mb-2", style={'fontWeight': '700'}),
+                    html.P("Suas atividades de treinamento mais recentes", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-3")
+            ])
+        ], className="bg-light rounded-3 mb-4"),
+
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.H5("🏃‍♂️ Atividades Recentes", className="card-title mb-3 text-center", style={'fontWeight': '600'}),
+                        create_recent_activities_table()
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ])
+        ], className="mb-4"),
+
+        # Separador visual com gradiente
+        html.Div([
+            html.Hr(style={
+                'border': 'none',
+                'height': '3px',
+                'background': 'linear-gradient(90deg, transparent, #667eea, #764ba2, transparent)',
+                'margin': '4rem 0',
+                'borderRadius': '3px'
+            })
+        ]),
+
+        # ============ HISTÓRICO DE MÉTRICAS ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("📊 Histórico", className="text-dark mb-2", style={'fontWeight': '700'}),
+                    html.P("Evolução das suas métricas nos últimos 7 dias", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-3")
+            ])
+        ], className="bg-light rounded-3 mb-4"),
+
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.H5("📈 Métricas dos Últimos 7 Dias", className="card-title mb-3 text-center", style={'fontWeight': '600'}),
+                        create_metrics_history_table(metrics)
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ])
+        ], className="mb-4"),
+
+        # Separador visual com gradiente
+        html.Div([
+            html.Hr(style={
+                'border': 'none',
+                'height': '3px',
+                'background': 'linear-gradient(90deg, transparent, #f093fb, #f5576c, transparent)',
+                'margin': '4rem 0',
+                'borderRadius': '3px'
+            })
+        ]),
+
+        # ============ ANÁLISE POR MODALIDADE ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("🏃 Análise", className="text-primary mb-2", style={'fontWeight': '700'}),
+                    html.P("Desempenho detalhado por modalidade esportiva", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-3")
+            ])
+        ], className="bg-light rounded-3 mb-4"),
+
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        create_modality_analysis_tabs()
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ])
+        ], className="mb-4"),
+
+    ])
+
+def create_metrics_chart(metrics):
+    try:
         # Preparar dados
         dates = [m['date'] for m in metrics]
         ctl = [m['ctl'] for m in metrics]
         atl = [m['atl'] for m in metrics]
         tsb = [m['tsb'] for m in metrics]
+        
+        # Carregar configuração para metas
+        config = load_config()
+        ctl_target = config.get('ctl_target', 50.0)  # Meta de CTL ideal
+        atl_max = config.get('atl_max', 80.0)  # ATL máximo recomendado
 
         # Calcular deltas semanais e percentuais
         if len(metrics) >= 8:
@@ -2042,19 +3055,84 @@ if page == "📊 Dashboard":
         fig = make_subplots(
             rows=3, cols=1,
             subplot_titles=('Métricas de Performance - Análise Completa', 'Mudanças na Última Semana', 'Progresso Mensal (Médias)'),
-            row_heights=[0.6, 0.2, 0.2],
-            vertical_spacing=0.08
+            row_heights=[0.55, 0.22, 0.23],
+            vertical_spacing=0.15
         )
 
         # ========== SUBPLOT 1: Gráfico Principal ==========
-        # Linhas principais
+        # Destacar finais de semana
+        for date_str in dates:
+            try:
+                from datetime import datetime as dt_parse
+                date_obj = dt_parse.fromisoformat(date_str)
+                # 5=sábado, 6=domingo
+                if date_obj.weekday() in [5, 6]:
+                    fig.add_vrect(
+                        x0=date_str, x1=date_str,
+                        fillcolor="rgba(128, 128, 128, 0.1)",
+                        layer="below",
+                        line_width=0,
+                        row=1, col=1
+                    )
+            except:
+                pass
+        
+        # Linhas de referência (metas)
+        # CTL ideal
+        fig.add_trace(
+            go.Scatter(
+                x=[dates[0], dates[-1]], 
+                y=[ctl_target, ctl_target],
+                mode='lines',
+                name=f'🎯 Meta CTL ({ctl_target:.0f})',
+                line=dict(color='#1976d2', width=2, dash='dot'),
+                opacity=0.6,
+                hovertemplate=f'<b>Meta CTL</b><br>Valor: {ctl_target:.0f}<extra></extra>'
+            ),
+            row=1, col=1
+        )
+        
+        # ATL máximo
+        fig.add_trace(
+            go.Scatter(
+                x=[dates[0], dates[-1]], 
+                y=[atl_max, atl_max],
+                mode='lines',
+                name=f'⚠️ ATL Máximo ({atl_max:.0f})',
+                line=dict(color='#d32f2f', width=2, dash='dot'),
+                opacity=0.6,
+                hovertemplate=f'<b>ATL Máximo</b><br>Valor: {atl_max:.0f}<extra></extra>'
+            ),
+            row=1, col=1
+        )
+        
+        # TSB ideal (zona entre -10 e 5)
+        fig.add_trace(
+            go.Scatter(
+                x=dates + dates[::-1],
+                y=[-10]*len(dates) + [5]*len(dates[::-1]),
+                fill='toself',
+                fillcolor='rgba(56, 142, 60, 0.15)',
+                line=dict(width=0),
+                name='🟢 Zona TSB Ideal',
+                showlegend=True,
+                hoverinfo='skip'
+            ),
+            row=1, col=1
+        )
+        
+        # Linhas principais com tooltips aprimorados
         fig.add_trace(
             go.Scatter(
                 x=dates, y=ctl, mode='lines+markers',
                 name='💪 CTL (Forma Física)',
                 line=dict(color='#1976d2', width=3),
                 marker=dict(size=6, symbol='circle'),
-                hovertemplate='<b>CTL</b><br>Data: %{x}<br>Valor: %{y:.1f}<extra></extra>'
+                customdata=[[f"{c:.2f}", f"{(c/ctl_target*100):.0f}%" if ctl_target > 0 else "N/A"] for c in ctl],
+                hovertemplate='<b>💪 CTL - Forma Física</b><br>' +
+                             'Data: %{x}<br>' +
+                             'Valor: %{customdata[0]}<br>' +
+                             'Meta: %{customdata[1]}<extra></extra>'
             ),
             row=1, col=1
         )
@@ -2065,7 +3143,11 @@ if page == "📊 Dashboard":
                 name='😴 ATL (Fadiga)',
                 line=dict(color='#d32f2f', width=3),
                 marker=dict(size=6, symbol='square'),
-                hovertemplate='<b>ATL</b><br>Data: %{x}<br>Valor: %{y:.1f}<extra></extra>'
+                customdata=[[f"{a:.2f}", f"{(a/atl_max*100):.0f}%" if atl_max > 0 else "N/A"] for a in atl],
+                hovertemplate='<b>😴 ATL - Fadiga</b><br>' +
+                             'Data: %{x}<br>' +
+                             'Valor: %{customdata[0]}<br>' +
+                             'vs Máximo: %{customdata[1]}<extra></extra>'
             ),
             row=1, col=1
         )
@@ -2076,7 +3158,11 @@ if page == "📊 Dashboard":
                 name='⚖️ TSB (Equilíbrio)',
                 line=dict(color='#388e3c', width=3),
                 marker=dict(size=6, symbol='triangle-up'),
-                hovertemplate='<b>TSB</b><br>Data: %{x}<br>Valor: %{y:.1f}<extra></extra>'
+                customdata=[[f"{t:.2f}", "Descansado" if t > 25 else "Fresco" if t > 5 else "Ideal" if t > -10 else "Cansado"] for t in tsb],
+                hovertemplate='<b>⚖️ TSB - Equilíbrio</b><br>' +
+                             'Data: %{x}<br>' +
+                             'Valor: %{customdata[0]}<br>' +
+                             'Status: %{customdata[1]}<extra></extra>'
             ),
             row=1, col=1
         )
@@ -2089,7 +3175,7 @@ if page == "📊 Dashboard":
                     name='MA-7 CTL',
                     line=dict(color='#1976d2', width=2, dash='dash', shape='spline'),
                     opacity=0.7,
-                    hovertemplate='<b>MA-7 CTL</b><br>Data: %{x}<br>Valor: %{y:.1f}<extra></extra>'
+                    hovertemplate='<b>MA-7 CTL</b><br>Data: %{x}<br>Valor: %{y:.2f}<extra></extra>'
                 ),
                 row=1, col=1
             )
@@ -2099,7 +3185,7 @@ if page == "📊 Dashboard":
                     name='MA-7 ATL',
                     line=dict(color='#d32f2f', width=2, dash='dash', shape='spline'),
                     opacity=0.7,
-                    hovertemplate='<b>MA-7 ATL</b><br>Data: %{x}<br>Valor: %{y:.1f}<extra></extra>'
+                    hovertemplate='<b>MA-7 ATL</b><br>Data: %{x}<br>Valor: %{y:.2f}<extra></extra>'
                 ),
                 row=1, col=1
             )
@@ -2109,24 +3195,10 @@ if page == "📊 Dashboard":
                     name='MA-7 TSB',
                     line=dict(color='#388e3c', width=2, dash='dash', shape='spline'),
                     opacity=0.7,
-                    hovertemplate='<b>MA-7 TSB</b><br>Data: %{x}<br>Valor: %{y:.1f}<extra></extra>'
+                    hovertemplate='<b>MA-7 TSB</b><br>Data: %{x}<br>Valor: %{y:.2f}<extra></extra>'
                 ),
                 row=1, col=1
             )
-
-        # Zonas preenchidas
-        fig.add_trace(
-            go.Scatter(
-                x=dates + dates[::-1],
-                y=[0]*len(dates) + [120]*len(dates),
-                fill='toself',
-                fillcolor='rgba(187, 222, 251, 0.2)',
-                line=dict(width=0),
-                showlegend=False,
-                hoverinfo='skip'
-            ),
-            row=1, col=1
-        )
 
         # ========== SUBPLOT 2: Deltas Semanais ==========
         labels_delta = ['CTL', 'ATL', 'TSB']
@@ -2216,10 +3288,11 @@ if page == "📊 Dashboard":
         trend_tsb = "📈" if delta_tsb > 0 else "📉" if delta_tsb < 0 else "➡️"
 
         fig.update_layout(
-            height=800,
+            height=1000,
+            autosize=True,  # Permitir responsividade horizontal
             title={
                 'text': f'Análise Completa das Métricas de Performance<br><span style="font-size:14px;color:#6c757d;">Tendência Semanal: CTL {trend_ctl} {delta_ctl:+.1f} ({pct_ctl:+.1f}%) | ATL {trend_atl} {delta_atl:+.1f} ({pct_atl:+.1f}%) | TSB {trend_tsb} {delta_tsb:+.1f} ({pct_tsb:+.1f}%)</span>',
-                'y': 0.98,
+                'y': 0.985,
                 'x': 0.5,
                 'xanchor': 'center',
                 'yanchor': 'top',
@@ -2233,11 +3306,12 @@ if page == "📊 Dashboard":
             legend=dict(
                 orientation='h',
                 yanchor='bottom',
-                y=-0.1,
+                y=-0.08,
                 xanchor='center',
                 x=0.5,
                 font={'size': 11}
-            )
+            ),
+            margin=dict(t=100, b=80, l=60, r=40)
         )
 
         # Configurar eixos
@@ -2250,991 +3324,2207 @@ if page == "📊 Dashboard":
         # Adicionar linha zero no subplot 2
         fig.add_hline(y=0, line_width=1, line_color='black', row=2, col=1)
 
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
         
-        # ============ REFERÊNCIAS PARA IRONMAN ============
-        with st.expander("🎯 Referências para Amador Bem Treinado - Meio Ironman"):
-            col_ref1, col_ref2 = st.columns(2)
-            with col_ref1:
-                st.markdown("""
-                **8 semanas antes da prova:**
-                - Forma Física (CTL): ~50
-                - Fadiga (ATL): ~25
-                - Equilíbrio (TSB): ~25
-                
-                **2 semanas antes da prova:**
-                - Forma Física (CTL): ~80
-                - Fadiga (ATL): ~40
-                - Equilíbrio (TSB): ~40
-                """)
-            with col_ref2:
-                st.markdown("""
-                **Semana da prova:**
-                - Forma Física (CTL): ~90
-                - Fadiga (ATL): ~45
-                - Equilíbrio (TSB): ~45
-                
-                **Valores atuais:**
-                - CTL: {:.1f}
-                - ATL: {:.1f}
-                - TSB: {:.1f}
-                """.format(ctl[-1], atl[-1], tsb[-1]))
-        
-        # ============ APRENDIZADO: ENTENDA MELHOR ============
-        st.markdown("## 📚 Aprendizado: Entenda Melhor")
-        st.markdown("*Informações educacionais e referências para otimizar seu treinamento*")
-        
-        # ============ EXPLICAÇÃO DAS MÉTRICAS ============
-        with st.expander("📚 O que significa cada métrica?"):
-            col_exp1, col_exp2 = st.columns(2)
-            
-            with col_exp1:
-                st.markdown("""
-                **💪 CTL (Forma Física Crônica)**
-                - Representa sua forma física geral, construída ao longo de ~6 semanas
-                - Valores mais altos = você está mais preparado para provas longas
-                - Para amador bem treinado em Ironman: ideal 50-90
-                
-                **😴 ATL (Fadiga Aguda)**
-                - Mostra a fadiga recente (últimos 7 dias)
-                - Valores altos = você precisa de descanso
-                - Idealmente ATL < CTL para evitar overtraining
-                """)
-            
-            with col_exp2:
-                st.markdown("""
-                **⚖️ TSB (Equilíbrio de Treino)**
-                - Diferença entre CTL e ATL: TSB = CTL - ATL
-                - Positivo = recuperação (bom para treinar duro)
-                - Negativo = fadiga (precisa descansar)
-                - É como um "saldo" de energia
-                """)
-        
-        # ============ REFERÊNCIAS PARA IRONMAN ============
-        with st.expander("🎯 Referências para Amador Bem Treinado - Meio Ironman"):
-            col_ref1, col_ref2 = st.columns(2)
-            with col_ref1:
-                st.markdown("""
-                **8 semanas antes da prova:**
-                - Forma Física (CTL): ~50
-                - Fadiga (ATL): ~25
-                - Equilíbrio (TSB): ~25
-                
-                **2 semanas antes da prova:**
-                - Forma Física (CTL): ~80
-                - Fadiga (ATL): ~40
-                - Equilíbrio (TSB): ~40
-                """)
-            with col_ref2:
-                st.markdown("""
-                **Semana da prova:**
-                - Forma Física (CTL): ~90
-                - Fadiga (ATL): ~45
-                - Equilíbrio (TSB): ~45
-                
-                **Valores atuais:**
-                - CTL: {:.1f}
-                - ATL: {:.1f}
-                - TSB: {:.1f}
-                """.format(ctl[-1], atl[-1], tsb[-1]))
-        
-        
-        # ============ TABELA DE ATIVIDADES RECENTES ============
-        st.markdown("### 📋 Últimas Métricas Diárias")
-        
+    except Exception as e:
+        # Retornar gráfico vazio em caso de erro
+        fig = go.Figure()
+        fig.update_layout(
+            title="Erro ao carregar dados",
+            height=800,
+            autosize=True
+        )
+        return fig
+
+def create_weekly_chart():
+    try:
         workouts = load_workouts()
-        if workouts:
-            config_for_tss = load_config()
-
-            def _modality_tss(category: str, tss_data: dict) -> float:
-                if category == 'running':
-                    return float(tss_data.get('rtss', 0) or 0) or float(tss_data.get('hrtss', 0) or 0) or float(tss_data.get('tss', 0) or 0)
-                if category == 'swimming':
-                    return float(tss_data.get('stss', 0) or 0) or float(tss_data.get('hrtss', 0) or 0) or float(tss_data.get('tss', 0) or 0)
-                if category == 'cycling':
-                    return float(tss_data.get('tss', 0) or 0)
-                return float(tss_data.get('hrtss', 0) or 0) or float(tss_data.get('tss', 0) or 0) or 0.0
-
-            # Pegar últimas 7 atividades
-            def get_activity_datetime(w):
-                # Usa startTimeLocal, depois startTimeGMT, depois startTimeInSeconds
-                from datetime import datetime as dt
-                if w.get('startTimeLocal'):
-                    try:
-                        return dt.strptime(w['startTimeLocal'], '%Y-%m-%d %H:%M:%S')
-                    except Exception:
-                        pass
-                if w.get('startTimeGMT'):
-                    try:
-                        return dt.strptime(w['startTimeGMT'], '%Y-%m-%d %H:%M:%S')
-                    except Exception:
-                        pass
-                if w.get('startTimeInSeconds'):
-                    return dt.fromtimestamp(w['startTimeInSeconds'])
-                return dt(1970,1,1)
-
-            recent_workouts = sorted(workouts, key=get_activity_datetime, reverse=True)[:7]
-
-            workout_df = []
-            for w in recent_workouts:
-                try:
-                    activity_name = w.get('activityName', 'Atividade Desconhecida')
-                    distance = w.get('distance', 0)
-                    duration_mins = w.get('duration', 0) // 60
-
-                    type_key = (w.get('activityType') or {}).get('typeKey', '')
-                    category = _activity_category(w)
-                    tss_calc = compute_tss_variants(w, config_for_tss)
-                    tss_value = _modality_tss(category, tss_calc)
-
-                    modality_label = {
-                        'cycling': 'Bike',
-                        'running': 'Corrida',
-                        'swimming': 'Natação',
-                        'strength': 'Força',
-                        'other': 'Outros'
-                    }.get(category, 'Outros')
-
-                    # Formatar distância
-                    if distance >= 1000:
-                        distance_str = f"{distance/1000:.2f} km"
-                    else:
-                        distance_str = f"{distance:.0f} m"
-
-                    # Data preferencial: startTimeLocal, depois startTimeGMT, depois startTimeInSeconds
-                    from datetime import datetime as dt
-                    if w.get('startTimeLocal'):
-                        activity_date = dt.strptime(w['startTimeLocal'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y')
-                    elif w.get('startTimeGMT'):
-                        activity_date = dt.strptime(w['startTimeGMT'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y')
-                    elif w.get('startTimeInSeconds'):
-                        activity_date = dt.fromtimestamp(w['startTimeInSeconds']).strftime('%d/%m/%Y')
-                    else:
-                        activity_date = ''
-
-                    workout_df.append({
-                        '📅 Data': activity_date,
-                        '🏃 Atividade': activity_name[:25],
-                        '🏷️ Modalidade': modality_label,
-                        '📏 Distância': distance_str,
-                        '⏱️ Duração': f"{duration_mins} min",
-                        '🎯 TSS': f"{tss_value:.1f}"
-                    })
-                except Exception:
-                    continue
-
-            if workout_df:
-                st.dataframe(workout_df, use_container_width=True, hide_index=True)
         
-        # ============ TABELA COM ÚLTIMAS MÉTRICAS ============
-        st.markdown("### 📊 Histórico de Métricas (Últimos 7 dias)")
+        # Definir semana atual (segunda a domingo)
+        now = datetime.now()
+        days_since_monday = now.isoweekday() - 1  # 0=segunda, 6=domingo
+        week_start = (now - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+        week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
         
-        display_metrics = metrics[-7:] if len(metrics) >= 7 else metrics
-        display_df = []
-        for m in reversed(display_metrics):
-            display_df.append({
-                '📅 Data': m['date'],
-                '💪 Fitness (CTL)': f"{m['ctl']:.1f}",
-                '😴 Fadiga (ATL)': f"{m['atl']:.1f}",
-                '⚖️ Equilíbrio (TSB)': f"{m['tsb']:.1f}",
-                '🎯 Carga Diária': f"{m['daily_load']:.1f}"
-            })
+        # Inicializar arrays para cada dia da semana (seg-dom)
+        dias = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+        corrida = [0.0] * 7
+        ciclismo = [0.0] * 7
+        natacao = [0.0] * 7
+        forca = [0.0] * 7
         
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-
-        # ============ MODALIDADES: SEU DESEMPENHO DETALHADO ============
-        st.markdown("## 🏊 Modalidades: Seu Desempenho Detalhado")
-        st.markdown("*Análise específica por esporte ao longo de 42 dias*")
-        
-        # ============ PROGRESSO POR MODALIDADE ============
-        st.markdown("---")
-        st.header("📊 Progresso por Modalidade")
-
-    workouts = load_workouts()
-    if workouts:
-        # Calcular progresso por modalidade e semana
-        modality_progress = calculate_modality_progress(workouts)
-
-        # Criar abas para cada modalidade
-        tab1, tab2, tab3, tab4 = st.tabs(["🚴 Ciclismo", "🏃 Corrida", "🏊 Natação", "💪 Musculação"])
-
-        with tab1:
-            display_modality_progress(modality_progress, 'cycling', "🚴 Ciclismo")
-
-        with tab2:
-            display_modality_progress(modality_progress, 'running', "🏃 Corrida")
-
-        with tab3:
-            display_modality_progress(modality_progress, 'swimming', "🏊 Natação")
-
-        with tab4:
-            display_modality_progress(modality_progress, 'strength', "💪 Musculação")
-    else:
-        st.info("🔄 Sincronize seus dados do Garmin Connect para ver o progresso por modalidade.")
-
-# PAGE 2: CALENDÁRIO
-elif page == "📅 Calendário":
-    st.title("📅 Calendário de Treinos")
-
-    # Usar dados processados em cache
-    workouts = get_processed_workouts()
-    config = load_config_cached()
-
-    # Função helper para formatar duração em hh:mm:ss (usando utils)
-    def format_duration_local(seconds):
-        return format_duration(seconds)
-
-    if not workouts:
-        st.warning("⚠️ Nenhum treino disponível. Vá para 'Atualizar Dados' para sincronizar.")
-    else:
-        # Controles de navegação do mês
-        col1, col2, col3 = st.columns([1, 3, 1])
-
-        # Inicializar mês/ano no session_state
-        if 'cal_month' not in st.session_state:
-            st.session_state.cal_month = datetime.now().month
-        if 'cal_year' not in st.session_state:
-            st.session_state.cal_year = datetime.now().year
-
-        with col1:
-            if st.button("◀ Mês Anterior", use_container_width=True):
-                if st.session_state.cal_month == 1:
-                    st.session_state.cal_month = 12
-                    st.session_state.cal_year -= 1
-                else:
-                    st.session_state.cal_month -= 1
-
-        with col2:
-            month_name = calendar.month_name[st.session_state.cal_month]
-            st.markdown(f"<h2 style='text-align:center;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:800;letter-spacing:1px;'>{month_name} {st.session_state.cal_year}</h2>", unsafe_allow_html=True)
-
-        with col3:
-            if st.button("Próximo Mês ▶", use_container_width=True):
-                if st.session_state.cal_month == 12:
-                    st.session_state.cal_month = 1
-                    st.session_state.cal_year += 1
-                else:
-                    st.session_state.cal_month += 1
-
-        st.divider()
-
-        # Preparar dados do calendário
-        cal = calendar.monthcalendar(st.session_state.cal_year, st.session_state.cal_month)
-
-        # Cores por modalidade
-        colors = {
-            'running': '#10b981',
-            'cycling': '#3b82f6',
-            'swimming': '#06b6d4',
-            'strength': '#f59e0b',
-            'other': '#6b7280'
-        }
-
-        icons = {
-            'running': '🏃',
-            'cycling': '🚴',
-            'swimming': '🏊',
-            'strength': '💪',
-            'other': '📊'
-        }
-
-        # Filtrar workouts do mês atual (processamento otimizado)
-        current_month_workouts = []
-        workouts_by_date = {}
-
+        # Processar atividades da semana
         for workout in workouts:
-            start_time = workout.get('start_time', '')
-            if start_time:
-                try:
-                    if 'T' in start_time:
-                        date_obj = datetime.strptime(start_time.split('T')[0], '%Y-%m-%d').date()
-                    else:
-                        date_obj = datetime.strptime(start_time.split(' ')[0], '%Y-%m-%d').date()
-
-                    if date_obj.month == st.session_state.cal_month and date_obj.year == st.session_state.cal_year:
-                        date_key = date_obj.day
-                        if date_key not in workouts_by_date:
-                            workouts_by_date[date_key] = []
-                        workouts_by_date[date_key].append(workout)
-                        current_month_workouts.append(workout)
-                except:
+            try:
+                start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
+                if not start_time:
                     continue
+                    
+                activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+                
+                # Verificar se está na semana atual
+                if week_start <= activity_date <= week_end:
+                    # Calcular dia da semana (0=segunda, 6=domingo)
+                    day_index = activity_date.isoweekday() - 1
+                    
+                    # Duração em horas
+                    duration_hours = float(workout.get('duration', 0) or 0) / 3600
+                    
+                    # Categorizar por modalidade
+                    category = _activity_category(workout)
+                    if category == 'running':
+                        corrida[day_index] += duration_hours
+                    elif category == 'cycling':
+                        ciclismo[day_index] += duration_hours
+                    elif category == 'swimming':
+                        natacao[day_index] += duration_hours
+                    elif category == 'strength':
+                        forca[day_index] += duration_hours
+            except Exception as e:
+                continue
         
-        # Se não há workouts no mês atual, tentar encontrar um mês com dados
-        if not current_month_workouts:
-            st.info("📅 Nenhum treino encontrado neste mês. Procurando dados em outros meses...")
+        # Converter arrays para formato hh:mm:ss
+        corrida_hms = [format_hours_to_hms(h) for h in corrida]
+        ciclismo_hms = [format_hours_to_hms(h) for h in ciclismo]
+        natacao_hms = [format_hours_to_hms(h) for h in natacao]
+        forca_hms = [format_hours_to_hms(h) for h in forca]
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Bar(
+            name='🏃 Corrida', 
+            x=dias, 
+            y=corrida,
+            customdata=corrida_hms,
+            marker_color='#fd7e14',
+            hovertemplate='<b>Corrida</b><br>%{x}<br>%{customdata}<extra></extra>'
+        ))
+        fig.add_trace(go.Bar(
+            name='🚴 Ciclismo', 
+            x=dias, 
+            y=ciclismo,
+            customdata=ciclismo_hms,
+            marker_color='#28a745',
+            hovertemplate='<b>Ciclismo</b><br>%{x}<br>%{customdata}<extra></extra>'
+        ))
+        fig.add_trace(go.Bar(
+            name='🏊 Natação', 
+            x=dias, 
+            y=natacao,
+            customdata=natacao_hms,
+            marker_color='#007bff',
+            hovertemplate='<b>Natação</b><br>%{x}<br>%{customdata}<extra></extra>'
+        ))
+        fig.add_trace(go.Bar(
+            name='💪 Força', 
+            x=dias, 
+            y=forca,
+            customdata=forca_hms,
+            marker_color='#6f42c1',
+            hovertemplate='<b>Força</b><br>%{x}<br>%{customdata}<extra></extra>'
+        ))
+        
+        # Formatar título com datas da semana
+        week_start_str = week_start.strftime("%d %b")
+        week_end_str = week_end.strftime("%d %b")
+        
+        fig.update_layout(
+            barmode='stack',
+            title=f'Treinos da Semana ({week_start_str} - {week_end_str})',
+            xaxis_title='Dia da Semana',
+            yaxis_title='Horas de Treino',
+            height=400,
+            autosize=True,  # Habilitar autosize para usar toda largura
+            plot_bgcolor='rgba(248,249,250,0.5)',
+            paper_bgcolor='white',
+            showlegend=True,
+            legend=dict(
+                orientation='h',
+                yanchor='bottom',
+                y=-0.3,
+                xanchor='center',
+                x=0.5,
+                font={'size': 11}
+            ),
+            margin=dict(l=50, r=30, t=80, b=120)
+        )
+        
+        return fig
+        
+    except Exception as e:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Erro ao carregar gráfico semanal",
+            height=400
+        )
+        return fig
+
+def create_distribution_chart():
+    try:
+        workouts = load_workouts()
+        
+        # Definir semana atual (segunda a domingo)
+        now = datetime.now()
+        days_since_monday = now.isoweekday() - 1  # 0=segunda, 6=domingo
+        week_start = (now - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+        week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+        
+        # Calcular distribuição da semana atual
+        from collections import defaultdict
+        distribuicao = defaultdict(lambda: {'horas': 0, 'atividades': 0})
+        
+        for w in workouts:
+            try:
+                start_time = w.get('startTimeLocal', w.get('startTime', ''))
+                if not start_time:
+                    continue
+                    
+                activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+                
+                # Verificar se está na semana atual
+                if not (week_start <= activity_date <= week_end):
+                    continue
+                
+                tipo = w.get('activityType', {}).get('typeKey', '').lower()
+                duracao_horas = (w.get('duration', 0) or 0) / 3600
+                
+                if tipo in ['running', 'treadmill_running', 'track_running', 'trail_running', 'indoor_running', 'virtual_running']:
+                    distribuicao['🏃 Corrida']['horas'] += duracao_horas
+                    distribuicao['🏃 Corrida']['atividades'] += 1
+                elif tipo in ['cycling', 'road_cycling', 'mountain_biking', 'indoor_cycling', 'gravel_cycling', 'virtual_cycling', 'virtual_ride', 'indoor_biking', 'bike', 'biking']:
+                    distribuicao['🚴 Ciclismo']['horas'] += duracao_horas
+                    distribuicao['🚴 Ciclismo']['atividades'] += 1
+                elif tipo in ['swimming', 'pool_swimming', 'open_water_swimming', 'indoor_swimming', 'lap_swimming']:
+                    distribuicao['🏊 Natação']['horas'] += duracao_horas
+                    distribuicao['🏊 Natação']['atividades'] += 1
+                elif tipo in ['strength_training', 'weight_training', 'functional_strength_training', 'gym_strength_training', 'crossfit', 'hiit']:
+                    distribuicao['💪 Força']['horas'] += duracao_horas
+                    distribuicao['💪 Força']['atividades'] += 1
+                else:
+                    distribuicao['⚽ Outros']['horas'] += duracao_horas
+                    distribuicao['⚽ Outros']['atividades'] += 1
+            except:
+                continue
+        
+        # Preparar dados para o gráfico
+        tipos = []
+        horas = []
+        atividades = []
+        
+        for tipo, dados in distribuicao.items():
+            if dados['horas'] > 0:
+                tipos.append(tipo)
+                horas.append(dados['horas'])
+                atividades.append(dados['atividades'])
+        
+        # Se não houver dados, mostrar vazio
+        if not tipos:
+            tipos = ['Sem dados']
+            horas = [0]
+            atividades = [0]
+        
+        # Criar gráfico de barras horizontais
+        fig = go.Figure()
+        
+        # Mapeamento de cores
+        cores = {
+            '🏃 Corrida': '#fd7e14',
+            '🚴 Ciclismo': '#28a745', 
+            '🏊 Natação': '#007bff',
+            '💪 Força': '#6f42c1',
+            '⚽ Outros': '#6c757d'
+        }
+        
+        fig.add_trace(go.Bar(
+            x=horas,
+            y=tipos,
+            orientation='h',
+            marker=dict(
+                color=[cores.get(t, '#6c757d') for t in tipos],
+                line=dict(width=0)
+            ),
+            text=[f'{h:.1f}h<br>{a} atividades' for h, a in zip(horas, atividades)],
+            textposition='outside',
+            hovertemplate='<b>%{y}</b><br>Horas: %{x:.1f}h<br>Atividades: %{customdata}<extra></extra>',
+            customdata=atividades
+        ))
+        
+        # Calcular total
+        total_horas = sum(horas)
+        total_atividades = sum(atividades)
+        
+        fig.update_layout(
+            title={
+                'text': f'Distribuição dos Tipos de Treino<br><span style="font-size:14px;color:#6c757d;">Total: {total_horas:.1f}h | {total_atividades} atividades</span>',
+                'y': 0.95,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+                'font': {'size': 16, 'color': '#212529'}
+            },
+            xaxis_title='Horas de Treino',
+            font={'family': 'Inter, -apple-system, sans-serif', 'size': 12},
+            plot_bgcolor='rgba(248,249,250,0.5)',
+            paper_bgcolor='white',
+            showlegend=False,
+            margin=dict(l=120, r=50, t=80, b=50),
+            height=300
+        )
+        
+        # Melhorar aparência dos eixos
+        fig.update_xaxes(showgrid=True, gridcolor='rgba(0,0,0,0.1)', zeroline=False)
+        fig.update_yaxes(showgrid=False)
+        
+        return fig
+        
+    except Exception as e:
+        fig = go.Figure()
+        fig.update_layout(
+            title="Erro ao carregar distribuição",
+            height=300
+        )
+        return fig
+
+def create_recent_activities_table():
+    try:
+        workouts = load_workouts()
+        if not workouts:
+            return html.Div("Nenhuma atividade encontrada.", className="text-muted")
+        
+        config_for_tss = load_config()
+        
+        def _modality_tss(category: str, tss_data: dict) -> float:
+            if category == 'running':
+                return float(tss_data.get('rtss', 0) or 0) or float(tss_data.get('hrtss', 0) or 0) or float(tss_data.get('tss', 0) or 0)
+            if category == 'swimming':
+                return float(tss_data.get('stss', 0) or 0) or float(tss_data.get('hrtss', 0) or 0) or float(tss_data.get('tss', 0) or 0)
+            if category == 'cycling':
+                return float(tss_data.get('tss', 0) or 0)
+            return float(tss_data.get('hrtss', 0) or 0) or float(tss_data.get('tss', 0) or 0) or 0.0
+        
+        def get_activity_datetime(w):
+            from datetime import datetime as dt
+            if w.get('startTimeLocal'):
+                try:
+                    return dt.strptime(w['startTimeLocal'], '%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    pass
+            if w.get('startTimeGMT'):
+                try:
+                    return dt.strptime(w['startTimeGMT'], '%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    pass
+            if w.get('startTimeInSeconds'):
+                return dt.fromtimestamp(w['startTimeInSeconds'])
+            return dt(1970,1,1)
+        
+        recent_workouts = sorted(workouts, key=get_activity_datetime, reverse=True)[:7]
+        
+        table_rows = []
+        for w in recent_workouts:
+            try:
+                activity_name = w.get('activityName', 'Atividade Desconhecida')
+                distance = w.get('distance', 0)
+                duration_hours = float(w.get('duration', 0) or 0) / 3600
+                
+                type_key = (w.get('activityType') or {}).get('typeKey', '')
+                category = _activity_category(w)
+                tss_calc = compute_tss_variants(w, config_for_tss)
+                tss_value = _modality_tss(category, tss_calc)
+                
+                modality_label = {
+                    'cycling': '🚴 Bike',
+                    'running': '🏃 Corrida',
+                    'swimming': '🏊 Natação',
+                    'strength': '💪 Força',
+                    'other': '⚽ Outros'
+                }.get(category, '⚽ Outros')
+                
+                # Determinar intensidade baseada em TSS
+                def get_intensity_badge(tss):
+                    if tss < 50:
+                        return dbc.Badge("Leve", color="success", className="me-1", style={'fontSize': '0.7rem'})
+                    elif tss < 100:
+                        return dbc.Badge("Moderado", color="info", className="me-1", style={'fontSize': '0.7rem'})
+                    elif tss < 150:
+                        return dbc.Badge("Intenso", color="warning", className="me-1", style={'fontSize': '0.7rem'})
+                    else:
+                        return dbc.Badge("Muito Intenso", color="danger", className="me-1", style={'fontSize': '0.7rem'})
+                
+                # Calcular pace/velocidade se disponível
+                pace_info = ""
+                if distance > 0 and duration_hours > 0:
+                    if category == 'running':
+                        # Calcular pace (min/km)
+                        pace_min_per_km = (duration_hours * 60) / (distance / 1000)
+                        pace_mins = int(pace_min_per_km)
+                        pace_secs = int((pace_min_per_km - pace_mins) * 60)
+                        pace_info = f"{pace_mins}:{pace_secs:02d}/km"
+                    elif category in ['cycling', 'swimming']:
+                        # Calcular velocidade (km/h)
+                        speed = (distance / 1000) / duration_hours
+                        pace_info = f"{speed:.1f} km/h"
+                
+                # Formatar distância
+                if distance >= 1000:
+                    distance_str = f"{distance/1000:.2f} km"
+                else:
+                    distance_str = f"{distance:.0f} m"
+                
+                table_rows.append(html.Tr([
+                    html.Td([
+                        html.Div(activity_name[:35] + "..." if len(activity_name) > 35 else activity_name, 
+                                style={'fontWeight': '500', 'marginBottom': '2px'}),
+                        html.Small(pace_info, className="text-muted") if pace_info else None
+                    ]),
+                    html.Td(modality_label),
+                    html.Td(distance_str),
+                    html.Td(format_hours_to_hms(duration_hours)),
+                    html.Td([
+                        get_intensity_badge(tss_value),
+                        html.Span(f"{tss_value:.0f}", style={'fontWeight': '600'})
+                    ])
+                ]))
+                
+            except Exception as e:
+                continue
+        
+        return dbc.Table([
+            html.Thead([
+                html.Tr([
+                    html.Th("Atividade", style={'width': '35%'}),
+                    html.Th("Modalidade", style={'width': '15%'}),
+                    html.Th("Distância", style={'width': '15%'}),
+                    html.Th("Duração", style={'width': '15%'}),
+                    html.Th("TSS / Intensidade", style={'width': '20%'})
+                ], style={'background': '#f8f9fa'})
+            ]),
+            html.Tbody(table_rows)
+        ], bordered=True, hover=True, responsive=True, size="sm", className="mb-0", 
+           style={'background': 'white'})
+        
+    except Exception as e:
+        return html.Div("Erro ao carregar atividades recentes.", className="text-danger")
+
+def create_metrics_history_table(metrics):
+    try:
+        if not metrics or len(metrics) < 7:
+            return html.Div("Dados insuficientes para mostrar histórico de 7 dias.", className="text-muted")
+        
+        # Pegar os últimos 7 dias e ordenar do mais recente para o mais antigo
+        recent_metrics = metrics[-7:][::-1]
+        
+        table_rows = []
+        for m in recent_metrics:
+            try:
+                date_obj = datetime.fromisoformat(m['date'])
+                date_str = date_obj.strftime('%d/%m')
+                weekday = date_obj.strftime('%a')  # Mon, Tue, etc.
+                
+                table_rows.append(html.Tr([
+                    html.Td(f"{date_str} ({weekday})"),
+                    html.Td(f"{m['ctl']:.2f}"),
+                    html.Td(f"{m['atl']:.2f}"),
+                    html.Td(f"{m['tsb']:.2f}")
+                ]))
+                
+            except Exception as e:
+                continue
+        
+        return dbc.Table([
+            html.Thead([
+                html.Tr([
+                    html.Th("Data"),
+                    html.Th("CTL"),
+                    html.Th("ATL"),
+                    html.Th("TSB")
+                ])
+            ]),
+            html.Tbody(table_rows)
+        ], striped=True, bordered=True, hover=True, responsive=True, size="sm", className="mb-0")
+        
+    except Exception as e:
+        return html.Div("Erro ao carregar histórico de métricas.", className="text-danger")
+
+def calculate_modality_progress(activities):
+    """Calcula progresso por modalidade agrupado por semana (42 dias)"""
+    if not activities:
+        return {}
+
+    # Usar a data da atividade mais recente como referência
+    if activities:
+        most_recent = max(activities, key=lambda x: datetime.strptime(x.get('startTimeLocal', x.get('startTime', '1900-01-01')), "%Y-%m-%d %H:%M:%S"))
+        now = datetime.strptime(most_recent.get('startTimeLocal', most_recent.get('startTime', '1900-01-01')), "%Y-%m-%d %H:%M:%S")
+    else:
+        now = datetime.now()
+
+    # Ajustar para o domingo mais recente (fim da semana)
+    days_since_monday = now.isoweekday() - 1  # 0=segunda, 6=domingo
+    end_of_current_week = now + timedelta(days=(6 - days_since_monday))
+    
+    # Calcular 42 dias (6 semanas completas) para trás a partir do domingo
+    start_date = end_of_current_week - timedelta(days=41)  # 41 dias = 6 semanas - 1 dia
+    # Ajustar para segunda-feira mais próxima
+    start_date = start_date - timedelta(days=start_date.isoweekday() - 1)
+
+    # Inicializar estrutura de dados
+    modalities = ['cycling', 'running', 'swimming', 'strength']
+    modality_data = {mod: [] for mod in modalities}
+
+    # Agrupar atividades por modalidade e semana
+    for activity in activities:
+        try:
+            activity_date = datetime.strptime(
+                activity.get('startTimeLocal', activity.get('startTime', '1900-01-01')),
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+            # Pular atividades fora do período de 42 dias
+            if activity_date < start_date:
+                continue
+
+            # Categorizar atividade
+            activity_type = _activity_category(activity)
+            if activity_type not in modalities:
+                continue
+
+            # Calcular semana (0-5, onde 0 é a semana mais antiga, começando na segunda)
+            days_diff = (activity_date - start_date).days
+            week_num = min(days_diff // 7, 5)  # Limitar a 6 semanas (0-5)
+
+            # Dados da atividade
+            distance = float(activity.get('distance', 0) or 0) / 1000  # km
+            tss = float(activity.get('tss', 0) or 0)
+            duration = float(activity.get('duration', 0) or 0) / 3600  # horas
+
+            # Adicionar à modalidade correspondente
+            if week_num < 6:  # Apenas 6 semanas (42 dias)
+                modality_data[activity_type].append({
+                    'week': week_num,
+                    'distance': distance,
+                    'tss': tss,
+                    'duration': duration,
+                    'date': activity_date.date()
+                })
+
+        except Exception as e:
+            continue
+
+    # Agregar por semana para cada modalidade
+    result = {}
+    for modality in modalities:
+        weekly_data = {}
+        for activity in modality_data[modality]:
+            week = activity['week']
+            if week not in weekly_data:
+                weekly_data[week] = {
+                    'distance': 0,
+                    'tss': 0,
+                    'duration': 0,
+                    'activities': 0,
+                    'week_start': start_date + timedelta(days=week*7)
+                }
+            weekly_data[week]['distance'] += activity['distance']
+            weekly_data[week]['tss'] += activity['tss']
+            weekly_data[week]['duration'] += activity['duration']
+            weekly_data[week]['activities'] += 1
+
+        # Converter para lista ordenada por semana
+        result[modality] = []
+        for week in range(6):
+            if week in weekly_data:
+                result[modality].append(weekly_data[week])
+            else:
+                result[modality].append({
+                    'distance': 0,
+                    'tss': 0,
+                    'duration': 0,
+                    'activities': 0,
+                    'week_start': start_date + timedelta(days=week*7)
+                })
+
+    return result
+
+def _activity_category(activity: dict) -> str:
+    """Categoriza atividade baseada no tipo"""
+    activity_type = activity.get('activityType', {})
+    if isinstance(activity_type, dict):
+        type_key = activity_type.get('typeKey', '').lower()
+    else:
+        type_key = str(activity_type).lower()
+
+    if type_key in [
+        'running', 'treadmill_running', 'track_running', 'trail_running', 'indoor_running', 'virtual_running'
+    ]:
+        return 'running'
+    if type_key in [
+        'cycling', 'road_cycling', 'mountain_biking', 'indoor_cycling', 'gravel_cycling', 'virtual_cycling',
+        'virtual_ride', 'indoor_biking', 'bike', 'biking', 'e_bike_ride', 'e_mountain_bike_ride',
+        'commute_cycling', 'touring_cycling', 'recumbent_cycling', 'cyclocross', 'road_biking',
+        'gravel_biking', 'tandem_cycling', 'bmx', 'fat_bike', 'track_cycling', 'spin_bike'
+    ]:
+        return 'cycling'
+    if type_key in ['swimming', 'pool_swimming', 'open_water_swimming', 'indoor_swimming', 'lap_swimming']:
+        return 'swimming'
+    if type_key in ['strength_training', 'weight_training', 'functional_strength_training', 'gym_strength_training', 'crossfit', 'hiit']:
+        return 'strength'
+    return 'other'
+
+def create_modality_analysis_tabs():
+    try:
+        workouts = load_workouts()
+        config = load_config()
+        
+        if not workouts:
+            return html.Div("Nenhum dado de treino disponível para análise.", className="text-muted")
+        
+        # Calcular progresso por modalidade
+        modality_progress = calculate_modality_progress(workouts)
+        
+        tabs = []
+        
+        # Cores padronizadas por modalidade
+        modality_colors = {
+            'cycling': {'primary': '#28a745', 'secondary': '#d4edda', 'name': '🚴 Ciclismo'},
+            'running': {'primary': '#fd7e14', 'secondary': '#ffe5d0', 'name': '🏃 Corrida'},
+            'swimming': {'primary': '#007bff', 'secondary': '#cce5ff', 'name': '🏊 Natação'},
+            'strength': {'primary': '#6f42c1', 'secondary': '#e7d9ff', 'name': '💪 Força'}
+        }
+        
+        for modality_key, modality_info in modality_colors.items():
+            data = modality_progress.get(modality_key, [])
             
-            # Encontrar o mês com mais workouts
-            month_stats = {}
-            for workout in workouts:
-                start_time = workout.get('start_time', '')
+            if not data:
+                tab_content = html.Div("Nenhum dado encontrado para esta modalidade.", className="text-muted p-3")
+            else:
+                # Calcular métricas totais
+                total_distance = sum(week['distance'] for week in data)
+                total_tss = sum(week['tss'] for week in data)
+                total_hours = sum(week['duration'] for week in data)
+                total_activities = sum(week['activities'] for week in data)
+                
+                # Criar tabela semanal
+                table_rows = []
+                for i, week_data in enumerate(data):
+                    week_start = week_data['week_start']
+                    week_end = week_start + timedelta(days=6)
+                    table_rows.append(html.Tr([
+                        html.Td(f'Semana {i+1}'),
+                        html.Td(f'{week_start.strftime("%d/%m")} - {week_end.strftime("%d/%m")}'),
+                        html.Td(f"{week_data['distance']:.1f} km"),
+                        html.Td(f"{week_data['tss']:.2f}"),
+                        html.Td(format_hours_to_hms(week_data['duration'])),
+                        html.Td(week_data['activities'])
+                    ]))
+                
+                tab_content = dbc.Container([
+                    # Cards de métricas
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("📏 Distância Total", className="card-title text-center"),
+                                    html.H4(f"{total_distance:.1f} km", className="text-center", style={'color': modality_info['primary']})
+                                ])
+                            ], className="mb-3")
+                        ], md=3),
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("🎯 TSS Total", className="card-title text-center"),
+                                    html.H4(f"{total_tss:.2f}", className="text-center", style={'color': modality_info['primary']})
+                                ])
+                            ], className="mb-3")
+                        ], md=3),
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("⏱️ Horas Totais", className="card-title text-center"),
+                                    html.H4(format_hours_to_hms(total_hours), className="text-center", style={'color': modality_info['primary']})
+                                ])
+                            ], className="mb-3")
+                        ], md=3),
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardBody([
+                                    html.H6("📊 Atividades", className="card-title text-center"),
+                                    html.H4(f"{total_activities}", className="text-center", style={'color': modality_info['primary']})
+                                ])
+                            ], className="mb-3")
+                        ], md=3)
+                    ]),
+                    
+                    # Tabela de progresso semanal
+                    dbc.Row([
+                        dbc.Col([
+                            html.H5("📅 Progresso Semanal", className="mb-3"),
+                            dbc.Table([
+                                html.Thead([
+                                    html.Tr([
+                                        html.Th("Semana"),
+                                        html.Th("Período"),
+                                        html.Th("Distância"),
+                                        html.Th("TSS"),
+                                        html.Th("Horas"),
+                                        html.Th("Atividades")
+                                    ])
+                                ]),
+                                html.Tbody(table_rows)
+                            ], striped=True, bordered=True, hover=True, responsive=True, size="sm")
+                        ])
+                    ]),
+                    
+                    # Gráficos de evolução semanal
+                    dbc.Row([
+                        dbc.Col([
+                            html.H5("📈 Evolução Semanal Completa", className="mb-3"),
+                            dcc.Graph(
+                                figure=create_modality_subplot_chart(data, modality_info, modality_key),
+                                style={'height': '600px'},
+                                config={'displayModeBar': False}
+                            )
+                        ])
+                    ]),
+                    
+                    # Gráfico de tendência consolidada
+                    dbc.Row([
+                        dbc.Col([
+                            html.H5("📊 Tendência Consolidada (42 dias)", className="mb-3"),
+                            dcc.Graph(
+                                figure=create_modality_trend_chart(data, modality_info, modality_info['name']),
+                                style={'height': '400px'},
+                                config={'displayModeBar': False}
+                            )
+                        ])
+                    ])
+                ], fluid=False)
+            
+            tabs.append(
+                dbc.Tab(tab_content, label=modality_info['name'], tab_id=f"tab-{modality_key}")
+            )
+        
+        return dbc.Tabs(tabs, active_tab="tab-cycling")
+        
+    except Exception as e:
+        return html.Div("Erro ao carregar análise por modalidade.", className="text-danger")
+
+# Função para criar heatmap de TSS (últimos 90 dias)
+def create_tss_heatmap(workouts):
+    """Cria heatmap visual de TSS por dia (últimos 90 dias)"""
+    try:
+        # Organizar TSS por dia
+        daily_tss = {}
+        for workout in workouts:
+            try:
+                start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
+                if not start_time:
+                    continue
+                
+                activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").date()
+                date_str = activity_date.strftime('%Y-%m-%d')
+                tss = float(workout.get('tss', 0) or 0)
+                daily_tss[date_str] = daily_tss.get(date_str, 0) + tss
+            except:
+                pass
+        
+        if not daily_tss:
+            fig = go.Figure()
+            fig.update_layout(
+                title="Sem dados de TSS disponíveis para os últimos 90 dias",
+                height=300,
+                font={'family': 'Inter, -apple-system, sans-serif'}
+            )
+            return fig
+        
+        # Últimos 90 dias
+        today = datetime.now().date()
+        dates = [(today - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(89, -1, -1)]
+        
+        # Organizar em semanas (13 semanas x 7 dias)
+        weeks = []
+        week_labels = []
+        for i in range(0, len(dates), 7):
+            week = dates[i:i+7]
+            if len(week) < 7:  # Preencher semana incompleta com zeros
+                week = week + [''] * (7 - len(week))
+            weeks.append([daily_tss.get(d, 0) if d else 0 for d in week])
+            if week[0]:
+                week_start = datetime.strptime(week[0], '%Y-%m-%d')
+                week_labels.append(week_start.strftime('%d/%m'))
+            else:
+                week_labels.append('')
+        
+        # Transpor para ter dias da semana nas linhas
+        if weeks:
+            days_data = list(map(list, zip(*weeks)))
+        else:
+            days_data = [[0] * 13 for _ in range(7)]
+        
+        # Criar heatmap
+        fig = go.Figure(data=go.Heatmap(
+            z=days_data,
+            x=week_labels,
+            y=['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'],
+            colorscale=[
+                [0, '#f8f9fa'],
+                [0.2, '#d1ecf1'],
+                [0.4, '#bee5eb'],
+                [0.6, '#7fc8d9'],
+                [0.8, '#17a2b8'],
+                [1, '#138496']
+            ],
+            colorbar=dict(
+                title=dict(text='TSS', side='right'),
+                tickmode='linear',
+                tick0=0,
+                dtick=50
+            ),
+            hovertemplate='<b>%{y}</b><br>Semana: %{x}<br>TSS: %{z:.0f}<extra></extra>',
+            showscale=True
+        ))
+        
+        fig.update_layout(
+            title='Heatmap de TSS - Últimos 90 Dias',
+            xaxis_title='Semana (início)',
+            yaxis_title='Dia da Semana',
+            height=300,
+            font={'family': 'Inter, -apple-system, sans-serif', 'size': 11},
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            xaxis=dict(
+                side='bottom',
+                tickangle=45
+            ),
+            yaxis=dict(
+                autorange='reversed'
+            )
+        )
+        
+        return fig
+    except Exception as e:
+        fig = go.Figure()
+        fig.update_layout(
+            title=f"Erro ao criar heatmap",
+            height=300,
+            font={'family': 'Inter, -apple-system, sans-serif'},
+            annotations=[{
+                'text': f'Detalhes: {str(e)[:100]}',
+                'xref': 'paper',
+                'yref': 'paper',
+                'x': 0.5,
+                'y': 0.5,
+                'showarrow': False,
+                'font': {'size': 12, 'color': '#dc3545'}
+            }]
+        )
+        return fig
+        return fig
+
+def render_calendar():
+    workouts = load_workouts()
+    config = load_config()
+    
+    if not workouts:
+        return dbc.Container([
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        html.H1("📅 Calendário", className="text-primary mb-2", style={'fontWeight': '700'}),
+                        html.P("Visualize suas atividades dia a dia", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                    ], className="text-center py-3")
+                ])
+            ], className="bg-light rounded-3 mb-4"),
+            dbc.Row([
+                dbc.Col([
+                    dbc.Alert([
+                        html.H5("⚠️ Nenhum treino disponível", className="alert-heading"),
+                        html.P("Vá para 'Configuração' para sincronizar com Garmin Connect.")
+                    ], color="warning")
+                ])
+            ])
+        ])
+    
+    # Data atual
+    now = datetime.now()
+    current_month = now.month
+    current_year = now.year
+    
+    # Organizar treinos por data
+    workouts_by_date = {}
+    monthly_stats = {
+        'total_workouts': 0,
+        'total_tss': 0,
+        'total_distance': 0,
+        'total_duration': 0,
+        'by_category': {}
+    }
+    
+    for workout in workouts:
+        try:
+            start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
+            if not start_time:
+                continue
+                
+            # Parsear data
+            if 'T' in start_time:
+                date_obj = datetime.strptime(start_time.split('T')[0], '%Y-%m-%d').date()
+            else:
+                date_obj = datetime.strptime(start_time.split(' ')[0], '%Y-%m-%d').date()
+            
+            # Adicionar ao dicionário
+            date_str = date_obj.strftime('%Y-%m-%d')
+            if date_str not in workouts_by_date:
+                workouts_by_date[date_str] = []
+            workouts_by_date[date_str].append(workout)
+            
+            # Estatísticas do mês atual
+            if date_obj.month == current_month and date_obj.year == current_year:
+                monthly_stats['total_workouts'] += 1
+                monthly_stats['total_tss'] += float(workout.get('tss', 0) or 0)
+                monthly_stats['total_distance'] += float(workout.get('distance', 0) or 0) / 1000
+                monthly_stats['total_duration'] += float(workout.get('duration', 0) or 0) / 3600
+                
+                # Por categoria
+                category = _activity_category(workout)
+                if category not in monthly_stats['by_category']:
+                    monthly_stats['by_category'][category] = {'count': 0, 'distance': 0, 'duration': 0, 'tss': 0}
+                monthly_stats['by_category'][category]['count'] += 1
+                monthly_stats['by_category'][category]['distance'] += float(workout.get('distance', 0) or 0) / 1000
+                monthly_stats['by_category'][category]['duration'] += float(workout.get('duration', 0) or 0) / 3600
+                monthly_stats['by_category'][category]['tss'] += float(workout.get('tss', 0) or 0)
+        except:
+            continue
+    
+    # Criar calendário do mês
+    cal = calendar.monthcalendar(current_year, current_month)
+    month_name = calendar.month_name[current_month]
+    
+    # Mapear categorias para emojis
+    category_emoji = {
+        'running': '🏃',
+        'cycling': '🚴',
+        'swimming': '🏊',
+        'strength': '💪',
+        'other': '⚽'
+    }
+    
+    category_names = {
+        'running': 'Corrida',
+        'cycling': 'Ciclismo',
+        'swimming': 'Natação',
+        'strength': 'Força',
+        'other': 'Outros'
+    }
+    
+    # Construir grade do calendário
+    calendar_grid = []
+    
+    # Cabeçalho dos dias da semana (incluindo coluna de resumo)
+    weekday_header = html.Tr([
+        html.Th("SEG", className="text-center py-2 px-1", style={'background': '#f8f9fa', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057'}),
+        html.Th("TER", className="text-center py-2 px-1", style={'background': '#f8f9fa', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057'}),
+        html.Th("QUA", className="text-center py-2 px-1", style={'background': '#f8f9fa', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057'}),
+        html.Th("QUI", className="text-center py-2 px-1", style={'background': '#f8f9fa', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057'}),
+        html.Th("SEX", className="text-center py-2 px-1", style={'background': '#f8f9fa', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057'}),
+        html.Th("SÁB", className="text-center py-2 px-1", style={'background': '#f8f9fa', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057'}),
+        html.Th("DOM", className="text-center py-2 px-1", style={'background': '#f8f9fa', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057'}),
+        html.Th("RESUMO", className="text-center py-2 px-1", style={'background': '#e9ecef', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057', 'minWidth': '120px'})
+    ])
+    
+    # Linhas do calendário
+    for week in cal:
+        week_cells = []
+        week_stats = {'workouts': 0, 'tss': 0, 'distance': 0, 'duration': 0}
+        
+        for day in week:
+            if day == 0:
+                # Dia vazio
+                week_cells.append(html.Td("", style={'height': '110px', 'background': '#fafafa', 'border': '1px solid #dee2e6'}))
+            else:
+                date_obj = datetime(current_year, current_month, day).date()
+                date_str = date_obj.strftime('%Y-%m-%d')
+                
+                # Verificar se há treinos neste dia
+                day_workouts = workouts_by_date.get(date_str, [])
+                
+                # Calcular TSS do dia
+                day_tss = sum(float(w.get('tss', 0) or 0) for w in day_workouts)
+                
+                # Acumular estatísticas da semana
+                for w in day_workouts:
+                    week_stats['workouts'] += 1
+                    week_stats['tss'] += float(w.get('tss', 0) or 0)
+                    week_stats['distance'] += float(w.get('distance', 0) or 0) / 1000
+                    week_stats['duration'] += float(w.get('duration', 0) or 0) / 3600
+                
+                is_today = date_obj == now.date()
+                
+                cell_style = {
+                    'height': '110px',
+                    'verticalAlign': 'top',
+                    'background': '#e8f4f8' if is_today else 'white',
+                    'border': '2px solid #2196F3' if is_today else '1px solid #dee2e6',
+                    'padding': '6px'
+                }
+                
+                # Cabeçalho do dia
+                day_header = html.Div([
+                    html.Div([
+                        html.Span(str(day), style={
+                            'fontSize': '0.95rem',
+                            'fontWeight': '600',
+                            'color': '#2196F3' if is_today else '#212529'
+                        }),
+                        html.Span(f" • {day_tss:.0f}" if day_tss > 0 else "", style={
+                            'fontSize': '0.7rem',
+                            'color': '#6c757d',
+                            'marginLeft': '4px'
+                        })
+                    ])
+                ], style={'marginBottom': '6px', 'borderBottom': '1px solid #e9ecef', 'paddingBottom': '4px'})
+                
+                cell_content = [day_header]
+                
+                if day_workouts:
+                    # Cores por categoria (padrão do dashboard)
+                    cat_colors = {
+                        'running': '#fd7e14',    # Laranja
+                        'cycling': '#28a745',    # Verde
+                        'swimming': '#007bff',   # Azul
+                        'strength': '#6f42c1',   # Roxo
+                        'other': '#6c757d'       # Cinza
+                    }
+                    
+                    # Mostrar atividades de forma simples com marcação de cor
+                    for i, w in enumerate(day_workouts[:3]):
+                        cat = _activity_category(w)
+                        emoji = category_emoji.get(cat, '⚽')
+                        name = w.get('activityName', 'Treino')[:18]
+                        duration_h = float(w.get('duration', 0) or 0) / 3600
+                        tss = float(w.get('tss', 0) or 0)
+                        color = cat_colors.get(cat, '#95a5a6')
+                        
+                        activity_item = html.Div([
+                            # Linha superior: nome
+                            html.Div([
+                                html.Span(emoji, style={'marginRight': '3px', 'fontSize': '0.75rem'}),
+                                html.Span(name, style={'fontSize': '0.7rem', 'color': '#212529', 'fontWeight': '500'})
+                            ], style={'marginBottom': '2px'}),
+                            # Linha inferior: tempo e TSS
+                            html.Div([
+                                html.Span(format_hours_to_hms(duration_h), style={'fontSize': '0.65rem', 'color': '#6c757d', 'marginRight': '6px'}),
+                                html.Span(f"TSS: {tss:.0f}", style={'fontSize': '0.65rem', 'color': '#6c757d'})
+                            ])
+                        ], style={
+                            'padding': '3px 4px',
+                            'marginBottom': '3px',
+                            'borderLeft': f'3px solid {color}',
+                            'background': '#f8f9fa',
+                            'fontSize': '0.7rem'
+                        })
+                        
+                        cell_content.append(activity_item)
+                    
+                    if len(day_workouts) > 3:
+                        cell_content.append(
+                            html.Div(
+                                f"+{len(day_workouts)-3} mais",
+                                style={
+                                    'fontSize': '0.65rem',
+                                    'color': '#6c757d',
+                                    'marginTop': '2px',
+                                    'fontStyle': 'italic'
+                                }
+                            )
+                        )
+                
+                week_cells.append(html.Td(cell_content, style=cell_style))
+        
+        # Adicionar célula de resumo semanal
+        summary_cell = html.Td([
+            html.Div([
+                html.Div(str(week_stats['workouts']), style={'fontSize': '1.5rem', 'fontWeight': '700', 'color': '#495057', 'marginBottom': '8px'}),
+                html.Div([
+                    html.Small("TSS: ", style={'color': '#6c757d', 'fontSize': '0.7rem'}),
+                    html.Span(f"{week_stats['tss']:.0f}", style={'fontWeight': '600', 'fontSize': '0.8rem', 'color': '#495057'})
+                ], style={'marginBottom': '3px'}),
+                html.Div([
+                    html.Small("Dist: ", style={'color': '#6c757d', 'fontSize': '0.7rem'}),
+                    html.Span(f"{week_stats['distance']:.1f}km", style={'fontWeight': '600', 'fontSize': '0.8rem', 'color': '#495057'})
+                ], style={'marginBottom': '3px'}),
+                html.Div([
+                    html.Small("Tempo: ", style={'color': '#6c757d', 'fontSize': '0.7rem'}),
+                    html.Span(format_hours_to_hms(week_stats['duration']), style={'fontWeight': '600', 'fontSize': '0.75rem', 'color': '#495057'})
+                ])
+            ])
+        ], style={
+            'height': '110px',
+            'verticalAlign': 'top',
+            'background': '#f8f9fa',
+            'padding': '10px',
+            'border': '1px solid #dee2e6',
+            'textAlign': 'center'
+        })
+        
+        week_cells.append(summary_cell)
+        calendar_grid.append(html.Tr(week_cells))
+    
+    return dbc.Container([
+        # Cabeçalho
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H1("📅 Calendário", className="text-primary mb-2", style={'fontWeight': '700'}),
+                    html.P("Visualize suas atividades dia a dia", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                ], className="text-center py-3")
+            ])
+        ], className="bg-light rounded-3 mb-4"),
+        
+        # Heatmap de TSS
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("🔥 Mapa de Calor - Intensidade dos Treinos", className="mb-3 text-danger", style={'fontWeight': '700'}),
+                    html.P("Visualização de TSS diário dos últimos 90 dias", className="text-muted mb-3", style={'fontSize': '0.9rem'})
+                ], className="text-center")
+            ])
+        ]),
+        
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        dcc.Graph(
+                            figure=create_tss_heatmap(workouts),
+                            config={'displayModeBar': False}
+                        )
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ])
+        ], className="mb-5"),
+        
+        # Título do mês
+        dbc.Row([
+            dbc.Col([
+                html.H3(f"{month_name} {current_year}", className="text-center mb-4", style={'fontWeight': '600'})
+            ])
+        ]),
+        
+        # Resumo mensal
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.H5("📊 Resumo do Mês", className="card-title mb-3 text-center", style={'fontWeight': '600'}),
+                        dbc.Row([
+                            dbc.Col([
+                                html.Div([
+                                    html.Div("🏋️", style={'fontSize': '2rem'}),
+                                    html.H4(f"{monthly_stats['total_workouts']}", className="text-primary mb-0"),
+                                    html.Small("Treinos", className="text-muted")
+                                ], className="text-center")
+                            ], md=3),
+                            dbc.Col([
+                                html.Div([
+                                    html.Div("🎯", style={'fontSize': '2rem'}),
+                                    html.H4(f"{monthly_stats['total_tss']:.0f}", className="text-primary mb-0"),
+                                    html.Small("TSS Total", className="text-muted")
+                                ], className="text-center")
+                            ], md=3),
+                            dbc.Col([
+                                html.Div([
+                                    html.Div("📏", style={'fontSize': '2rem'}),
+                                    html.H4(f"{monthly_stats['total_distance']:.1f} km", className="text-primary mb-0"),
+                                    html.Small("Distância", className="text-muted")
+                                ], className="text-center")
+                            ], md=3),
+                            dbc.Col([
+                                html.Div([
+                                    html.Div("⏱️", style={'fontSize': '2rem'}),
+                                    html.H4(format_hours_to_hms(monthly_stats['total_duration']), className="text-primary mb-0"),
+                                    html.Small("Tempo Total", className="text-muted")
+                                ], className="text-center")
+                            ], md=3)
+                        ])
+                    ])
+                ], className="shadow-sm border-0 mb-4", style={'borderRadius': '12px'})
+            ])
+        ]),
+        
+        # Grade do calendário
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.Table([
+                        html.Thead([weekday_header]),
+                        html.Tbody(calendar_grid)
+                    ], className="table table-bordered mb-0", style={
+                        'width': '100%',
+                        'tableLayout': 'fixed'
+                    })
+                ], style={'overflowX': 'auto'})
+            ])
+        ], className="mb-4"),
+        
+        # Detalhes por modalidade
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.H5("📈 Estatísticas por Modalidade", className="card-title mb-3 text-center", style={'fontWeight': '600'}),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Card([
+                                    dbc.CardBody([
+                                        html.H6(f"{category_emoji.get(cat, '⚽')} {category_names.get(cat, cat.title())}", className="text-center mb-3", style={'fontWeight': '600'}),
+                                        html.Hr(),
+                                        html.Div([
+                                            html.Small("Treinos: ", className="text-muted"),
+                                            html.Strong(f"{stats['count']}")
+                                        ], className="mb-2"),
+                                        html.Div([
+                                            html.Small("Distância: ", className="text-muted"),
+                                            html.Strong(f"{stats['distance']:.1f} km")
+                                        ], className="mb-2"),
+                                        html.Div([
+                                            html.Small("Tempo: ", className="text-muted"),
+                                            html.Strong(format_hours_to_hms(stats['duration']))
+                                        ], className="mb-2"),
+                                        html.Div([
+                                            html.Small("TSS: ", className="text-muted"),
+                                            html.Strong(f"{stats['tss']:.0f}")
+                                        ])
+                                    ])
+                                ], className="mb-3 shadow-sm", style={'borderRadius': '10px'})
+                            ], md=4)
+                            for cat, stats in sorted(monthly_stats['by_category'].items(), key=lambda x: x[1]['count'], reverse=True)
+                        ])
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ])
+        ])
+    ])
+
+def render_goals():
+    workouts = load_workouts()
+    config = load_config()
+    goals_progress = calculate_goals_progress(workouts, config)
+    
+    # Calcular períodos para exibição
+    now = datetime.now()
+    days_since_monday = now.isoweekday() - 1  # 0=segunda, 6=domingo
+    week_start = (now - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+    week_end = week_start + timedelta(days=6)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    
+    week_period = f"{week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m')}"
+    month_name = now.strftime('%B %Y')
+    
+    return dbc.Container([
+        dbc.Row([
+            dbc.Col([
+                html.H2("🎯 Configuração de Metas", className="mb-4"),
+                html.P("Defina suas metas de treinamento semanal, mensal e de performance.", className="text-muted mb-4"),
+                html.Div([
+                    html.P("💡 Dicas:", className="mb-2"),
+                    html.Ul([
+                        html.Li("Metas realistas: Comece com objetivos alcançáveis e aumente gradualmente"),
+                        html.Li("Equilíbrio: Mantenha ATL abaixo de 80 para evitar overtraining"),
+                        html.Li("Progressão: Acompanhe seu progresso e ajuste conforme necessário")
+                    ])
+                ], className="alert alert-info mb-4")
+            ])
+        ]),
+        
+        # Metas semanais
+        dbc.Card([
+            dbc.CardHeader("📅 Metas Semanais"),
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Distância (km)"),
+                        dbc.Input(id="weekly-distance-goal", type="number", value=config.get("weekly_distance_goal", 50.0), min=0.0, max=500.0, step=5.0),
+                        html.Small("Distância total semanal em quilômetros", className="text-muted")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Label("TSS Total"),
+                        dbc.Input(id="weekly-tss-goal", type="number", value=config.get("weekly_tss_goal", 300), min=0, max=2000),
+                        html.Small("Training Stress Score semanal total", className="text-muted")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Label("Horas de Treino"),
+                        dbc.Input(id="weekly-hours-goal", type="number", value=config.get("weekly_hours_goal", 7.0), min=0.0, max=50.0, step=0.5),
+                        html.Small("Tempo total de treinamento semanal em horas", className="text-muted")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Label("Número de Atividades"),
+                        dbc.Input(id="weekly-activities-goal", type="number", value=config.get("weekly_activities_goal", 5), min=0, max=20),
+                        html.Small("Número de sessões de treino por semana", className="text-muted")
+                    ], md=3)
+                ])
+            ])
+        ], className="mb-4"),
+        
+        # Metas mensais
+        dbc.Card([
+            dbc.CardHeader("📊 Metas Mensais"),
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Distância (km)"),
+                        dbc.Input(id="monthly-distance-goal", type="number", value=config.get("monthly_distance_goal", 200.0), min=0.0, max=2000.0, step=10.0),
+                        html.Small("Distância total mensal em quilômetros", className="text-muted")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Label("TSS Total"),
+                        dbc.Input(id="monthly-tss-goal", type="number", value=config.get("monthly_tss_goal", 1200), min=0, max=8000),
+                        html.Small("Training Stress Score mensal total", className="text-muted")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Label("Horas de Treino"),
+                        dbc.Input(id="monthly-hours-goal", type="number", value=config.get("monthly_hours_goal", 30.0), min=0.0, max=200.0, step=1.0),
+                        html.Small("Tempo total de treinamento mensal em horas", className="text-muted")
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Label("Número de Atividades"),
+                        dbc.Input(id="monthly-activities-goal", type="number", value=config.get("monthly_activities_goal", 20), min=0, max=100),
+                        html.Small("Número de sessões de treino por mês", className="text-muted")
+                    ], md=3)
+                ])
+            ])
+        ], className="mb-4"),
+        
+        # Metas de performance
+        dbc.Card([
+            dbc.CardHeader("🏆 Metas de Performance"),
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("CTL Alvo (Forma Física)"),
+                        dbc.Input(id="target-ctl", type="number", value=config.get("target_ctl", 50), min=0, max=150),
+                        html.Small("Nível de forma física desejado (Chronic Training Load)", className="text-muted")
+                    ], md=6),
+                    dbc.Col([
+                        dbc.Label("ATL Máximo Permitido"),
+                        dbc.Input(id="target-atl-max", type="number", value=config.get("target_atl_max", 80), min=0, max=200),
+                        html.Small("Limite máximo de fadiga aguda para evitar overtraining", className="text-muted")
+                    ], md=6)
+                ])
+            ])
+        ], className="mb-4"),
+        
+        # Botão salvar
+        dbc.Row([
+            dbc.Col([
+                dbc.Button("💾 Salvar Metas", id="save-goals-btn", color="success", size="lg", className="w-100")
+            ], md=6, className="mx-auto")
+        ], className="mb-4"),
+        
+        # Progresso atual
+        dbc.Card([
+            dbc.CardHeader("📈 Progresso Atual"),
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        html.H5(f"Semanal ({week_period})", className="text-center mb-3"),
+                        dbc.Row([
+                            dbc.Col([
+                                html.Div([
+                                    html.H6("🏃 Distância"),
+                                    html.P(f"{goals_progress['weekly']['distance']:.1f}km / {config.get('weekly_distance_goal', 50.0):.0f}km"),
+                                    dbc.Progress(value=min(100, (goals_progress['weekly']['distance'] / config.get('weekly_distance_goal', 50.0) * 100) if config.get('weekly_distance_goal', 50.0) > 0 else 0), color="success" if goals_progress['weekly']['distance'] >= config.get('weekly_distance_goal', 50.0) else "primary")
+                                ], className="mb-3")
+                            ], md=6),
+                            dbc.Col([
+                                html.Div([
+                                    html.H6("🎯 TSS"),
+                                    html.P(f"{goals_progress['weekly']['tss']:.0f} / {config.get('weekly_tss_goal', 300)}"),
+                                    dbc.Progress(value=min(100, (goals_progress['weekly']['tss'] / config.get('weekly_tss_goal', 300) * 100) if config.get('weekly_tss_goal', 300) > 0 else 0), color="success" if goals_progress['weekly']['tss'] >= config.get('weekly_tss_goal', 300) else "primary")
+                                ], className="mb-3")
+                            ], md=6)
+                        ]),
+                        dbc.Row([
+                            dbc.Col([
+                                html.Div([
+                                    html.H6("⏱️ Horas"),
+                                    html.P(f"{format_hours_to_hms(goals_progress['weekly']['hours'])} / {format_hours_to_hms(config.get('weekly_hours_goal', 7.0))}"),
+                                    dbc.Progress(value=min(100, (goals_progress['weekly']['hours'] / config.get('weekly_hours_goal', 7.0) * 100) if config.get('weekly_hours_goal', 7.0) > 0 else 0), color="success" if goals_progress['weekly']['hours'] >= config.get('weekly_hours_goal', 7.0) else "primary")
+                                ], className="mb-3")
+                            ], md=6),
+                            dbc.Col([
+                                html.Div([
+                                    html.H6("📊 Atividades"),
+                                    html.P(f"{goals_progress['weekly']['activities']} / {config.get('weekly_activities_goal', 5)}"),
+                                    dbc.Progress(value=min(100, (goals_progress['weekly']['activities'] / config.get('weekly_activities_goal', 5) * 100) if config.get('weekly_activities_goal', 5) > 0 else 0), color="success" if goals_progress['weekly']['activities'] >= config.get('weekly_activities_goal', 5) else "primary")
+                                ])
+                            ], md=6)
+                        ])
+                    ], md=6),
+                    dbc.Col([
+                        html.H5(f"Mensal ({month_name})", className="text-center mb-3"),
+                        dbc.Row([
+                            dbc.Col([
+                                html.Div([
+                                    html.H6("🏃 Distância"),
+                                    html.P(f"{goals_progress['monthly']['distance']:.1f}km / {config.get('monthly_distance_goal', 200.0):.0f}km"),
+                                    dbc.Progress(value=min(100, (goals_progress['monthly']['distance'] / config.get('monthly_distance_goal', 200.0) * 100) if config.get('monthly_distance_goal', 200.0) > 0 else 0), color="success" if goals_progress['monthly']['distance'] >= config.get('monthly_distance_goal', 200.0) else "primary")
+                                ], className="mb-3")
+                            ], md=6),
+                            dbc.Col([
+                                html.Div([
+                                    html.H6("🎯 TSS"),
+                                    html.P(f"{goals_progress['monthly']['tss']:.0f} / {config.get('monthly_tss_goal', 1200)}"),
+                                    dbc.Progress(value=min(100, (goals_progress['monthly']['tss'] / config.get('monthly_tss_goal', 1200) * 100) if config.get('monthly_tss_goal', 1200) > 0 else 0), color="success" if goals_progress['monthly']['tss'] >= config.get('monthly_tss_goal', 1200) else "primary")
+                                ], className="mb-3")
+                            ], md=6)
+                        ]),
+                        dbc.Row([
+                            dbc.Col([
+                                html.Div([
+                                    html.H6("⏱️ Horas"),
+                                    html.P(f"{format_hours_to_hms(goals_progress['monthly']['hours'])} / {format_hours_to_hms(config.get('monthly_hours_goal', 30.0))}"),
+                                    dbc.Progress(value=min(100, (goals_progress['monthly']['hours'] / config.get('monthly_hours_goal', 30.0) * 100) if config.get('monthly_hours_goal', 30.0) > 0 else 0), color="success" if goals_progress['monthly']['hours'] >= config.get('monthly_hours_goal', 30.0) else "primary")
+                                ], className="mb-3")
+                            ], md=6),
+                            dbc.Col([
+                                html.Div([
+                                    html.H6("📊 Atividades"),
+                                    html.P(f"{goals_progress['monthly']['activities']} / {config.get('monthly_activities_goal', 20)}"),
+                                    dbc.Progress(value=min(100, (goals_progress['monthly']['activities'] / config.get('monthly_activities_goal', 20) * 100) if config.get('monthly_activities_goal', 20) > 0 else 0), color="success" if goals_progress['monthly']['activities'] >= config.get('monthly_activities_goal', 20) else "primary")
+                                ])
+                            ], md=6)
+                        ])
+                    ], md=6)
+                ])
+            ])
+        ])
+    ])
+
+def render_config():
+    config = load_config()
+    credentials = load_credentials()
+    
+    return dbc.Container([
+        dbc.Row([
+            dbc.Col([
+                html.H2("⚙️ Configuração", className="mb-4"),
+                
+                # Credenciais Garmin
+                dbc.Card([
+                    dbc.CardHeader("🔐 Credenciais Garmin Connect"),
+                    dbc.CardBody([
+                        html.P("Seus dados de login são armazenados de forma segura apenas neste dispositivo.", className="text-muted mb-3"),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Label("Email"),
+                                dbc.Input(id="garmin-email", type="email", value=credentials.get("email", ""), placeholder="seu@email.com")
+                            ], md=6),
+                            dbc.Col([
+                                dbc.Label("Senha"),
+                                dbc.Input(id="garmin-password", type="password", value=credentials.get("password", ""), placeholder="••••••••")
+                            ], md=6)
+                        ]),
+                        dbc.Button("💾 Salvar Credenciais", id="save-credentials-btn", color="primary", className="mt-3")
+                    ])
+                ], className="mb-4"),
+                
+                # Configurações de Fitness
+                dbc.Card([
+                    dbc.CardHeader("🏃 Parâmetros de Fitness"),
+                    dbc.CardBody([
+                        html.P("💡 Sobre o hrTSS: O cálculo do hrTSS usa o LTHR (Limiar de Frequência Cardíaca) como referência, seguindo a fórmula do TrainingPeaks. Configure corretamente seu LTHR para obter valores precisos.", className="text-muted mb-3"),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Label("Idade"),
+                                dbc.Input(id="config-age", type="number", value=config.get("age", 29), min=15, max=100)
+                            ], md=3),
+                            dbc.Col([
+                                dbc.Label("FTP (watts)"),
+                                dbc.Input(id="config-ftp", type="number", value=config.get("ftp", 250), min=50, max=500, step=5)
+                            ], md=3),
+                            dbc.Col([
+                                dbc.Label("FC Máx (bpm)"),
+                                dbc.Input(id="config-hr-max", type="number", value=config.get("hr_max", 191), min=150, max=220)
+                            ], md=3),
+                            dbc.Col([
+                                dbc.Label("FC Repouso (bpm)"),
+                                dbc.Input(id="config-hr-rest", type="number", value=config.get("hr_rest", 50), min=40, max=100)
+                            ], md=3)
+                        ]),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Label("LTHR - FC Limiar (bpm)"),
+                                dbc.Input(id="config-hr-threshold", type="number", value=config.get("hr_threshold", 162), min=100, max=200),
+                                html.Small("Usado para calcular hrTSS (TrainingPeaks)", className="text-muted")
+                            ], md=4),
+                            dbc.Col([
+                                dbc.Label("Pace Threshold - Corrida (mm:ss)"),
+                                dbc.Input(id="config-pace-threshold", type="text", value=config.get("pace_threshold", "4:22"))
+                            ], md=4),
+                            dbc.Col([
+                                dbc.Label("Swim Pace Threshold - Natação (mm:ss)"),
+                                dbc.Input(id="config-swim-pace-threshold", type="text", value=config.get("swim_pace_threshold", "2:01"))
+                            ], md=4)
+                        ], className="mt-3"),
+                        dbc.Button("💾 Salvar Configurações", id="save-config-btn", color="success", className="mt-3")
+                    ])
+                ], className="mb-4"),
+                
+                # Atualização de Dados
+                dbc.Card([
+                    dbc.CardHeader("🔄 Atualizar Dados do Garmin Connect"),
+                    dbc.CardBody([
+                        html.P("Clique no botão abaixo para sincronizar seus dados com Garmin Connect. Este processo busca todas as atividades dos últimos 42 dias e recalcula as métricas de fitness (CTL, ATL, TSB).", className="mb-3"),
+                        dbc.Button("📊 Atualizar Dados", id="update-data-btn", color="info", size="lg", className="me-2"),
+                        dbc.Button("🧹 Reiniciar Dados", id="reset-data-btn", color="danger"),
+                        html.Div(id="update-status", className="mt-3")
+                    ])
+                ])
+            ])
+        ]),
+        
+        # Status de salvamento
+        dbc.Row([
+            dbc.Col([
+                html.Div(id="config-status", className="mt-3")
+            ])
+        ])
+    ])
+
+# Funções auxiliares
+def load_metrics():
+    """Carrega métricas de fitness do armazenamento local"""
+    if METRICS_FILE.exists():
+        with open(METRICS_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+def load_config():
+    """Carrega configurações de fitness do armazenamento local"""
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
+    return {
+        "age": 29,
+        "ftp": 250,
+        "pace_threshold": "4:22",
+        "swim_pace_threshold": "2:01",
+        "hr_rest": 50,
+        "hr_max": 191,
+        "hr_threshold": 162,
+        "weekly_distance_goal": 50.0,
+        "weekly_tss_goal": 300,
+        "weekly_hours_goal": 7.0,
+        "weekly_activities_goal": 5,
+        "monthly_distance_goal": 200.0,
+        "monthly_tss_goal": 1200,
+        "monthly_hours_goal": 30.0,
+        "monthly_activities_goal": 20,
+        "target_ctl": 50,
+        "target_atl_max": 80,
+    }
+
+def save_config(config):
+    """Salva configurações de fitness no armazenamento local"""
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=4)
+
+def load_credentials():
+    """Carrega credenciais do Garmin do armazenamento local"""
+    if CREDENTIALS_FILE.exists():
+        with open(CREDENTIALS_FILE, "r") as f:
+            return json.load(f)
+    return {"email": "", "password": ""}
+
+def save_credentials(email, password):
+    """Salva credenciais do Garmin no armazenamento local (apenas no device)"""
+    with open(CREDENTIALS_FILE, "w") as f:
+        json.dump({"email": email, "password": password}, f, indent=4)
+    try:
+        os.chmod(CREDENTIALS_FILE, 0o600)
+    except:
+        pass
+
+def load_metrics():
+    """Carrega métricas de fitness do armazenamento local"""
+    if METRICS_FILE.exists():
+        with open(METRICS_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+def save_metrics(metrics):
+    """Salva métricas de fitness no armazenamento local"""
+    with open(METRICS_FILE, "w") as f:
+        json.dump(metrics, f, indent=4)
+
+def load_workouts():
+    """Carrega lista de workouts do armazenamento local"""
+    if WORKOUTS_FILE.exists():
+        with open(WORKOUTS_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+def save_workouts(workouts):
+    """Salva lista de workouts no armazenamento local"""
+    with open(WORKOUTS_FILE, "w") as f:
+        json.dump(workouts, f, indent=4)
+
+def calculate_trimp(activity, config):
+    """Calcula TRIMP (Training Impulse) para uma atividade"""
+    category = _activity_category(activity)
+
+    duration_sec = float(activity.get('duration', 0) or 0)
+    if duration_sec <= 0:
+        return 0.0
+    duration_min = duration_sec / 60.0
+    duration_h = duration_sec / 3600.0
+
+    hr_rest = float(config.get('hr_rest', 50) or 50)
+    hr_max = float(config.get('hr_max', 191) or 191)
+
+    def _avg_hr_value(a: dict) -> float:
+        v = (a.get('averageHR') or a.get('avgHR') or a.get('avgHr') or a.get('averageHeartRate') or a.get('avgHeartRate'))
+        return float(v or 0)
+
+    def _hr_trimp(avg_hr: float) -> float:
+        if avg_hr <= 0 or hr_max <= hr_rest:
+            return 0.0
+        hr_reserve = (avg_hr - hr_rest) / (hr_max - hr_rest)
+        hr_reserve = max(0.0, min(2.0, float(hr_reserve)))
+        trimp_raw = float(duration_min * hr_reserve * 0.64 * math.exp(1.92 * hr_reserve))
+        return trimp_raw / 2.5
+
+    avg_hr = _avg_hr_value(activity)
+
+    if category == 'cycling':
+        ftp = float(config.get('ftp', 0) or 0)
+        np_power = activity.get('normalizedPower') or activity.get('normPower')
+        avg_power = activity.get('averagePower') or activity.get('avgPower')
+        power = float(np_power or avg_power or 0)
+        if ftp > 0 and power > 0:
+            if_ = power / ftp
+            trimp = duration_h * (if_ ** 2) * 100.0
+        else:
+            trimp = _hr_trimp(avg_hr)
+    elif category == 'running':
+        if avg_hr > 0:
+            trimp = _hr_trimp(avg_hr)
+        else:
+            avg_speed = float(activity.get('averageSpeed', 0) or 0)
+            if avg_speed > 0:
+                pace_s_km = 1000.0 / avg_speed
+                threshold_sec = _parse_mmss_to_seconds(config.get('pace_threshold', '5:00'), default_seconds=300)
+                intensity = float(threshold_sec) / float(pace_s_km)
+                trimp = duration_h * (intensity ** 2) * 100.0
+            else:
+                trimp = 0.0
+    elif category == 'swimming':
+        if avg_hr > 0:
+            if avg_hr <= 0 or hr_max <= hr_rest:
+                trimp = 0.0
+            else:
+                hr_reserve = (avg_hr - hr_rest) / (hr_max - hr_rest)
+                hr_reserve = max(0.0, min(2.0, float(hr_reserve)))
+                trimp_raw = float(duration_min * hr_reserve * 0.64 * math.exp(1.92 * hr_reserve))
+                trimp = trimp_raw / 9.0
+        else:
+            distance_m = float(activity.get('distance', 0) or 0)
+            if distance_m > 0:
+                pace_sec_100m = (duration_sec / distance_m) * 100.0
+                threshold_sec = _parse_mmss_to_seconds(config.get('swim_pace_threshold', '2:30'), default_seconds=150)
+                intensity = float(threshold_sec) / float(pace_sec_100m)
+                trimp = (duration_h * (intensity ** 2) * 100.0) / 3.5
+            else:
+                trimp = duration_h * 22.0
+    else:
+        trimp = _hr_trimp(avg_hr)
+    
+    return trimp
+
+def _parse_mmss_to_seconds(value: str, default_seconds: int) -> int:
+    try:
+        if not value:
+            return default_seconds
+        parts = str(value).strip().split(':')
+        if len(parts) != 2:
+            return default_seconds
+        mm = int(parts[0])
+        ss = int(parts[1])
+        if mm < 0 or ss < 0 or ss >= 60:
+            return default_seconds
+        return mm * 60 + ss
+    except Exception:
+        return default_seconds
+
+def _activity_category(activity: dict) -> str:
+    """Categoriza atividade baseada no tipo"""
+    activity_type = activity.get('activityType', {})
+    if isinstance(activity_type, dict):
+        type_key = activity_type.get('typeKey', '').lower()
+    else:
+        type_key = str(activity_type).lower()
+
+    if type_key in ['running', 'treadmill_running', 'track_running', 'trail_running', 'indoor_running', 'virtual_running']:
+        return 'running'
+    if type_key in ['cycling', 'road_cycling', 'mountain_biking', 'indoor_cycling', 'gravel_cycling', 'virtual_cycling',
+                   'virtual_ride', 'indoor_biking', 'bike', 'biking', 'e_bike_ride', 'e_mountain_bike_ride',
+                   'commute_cycling', 'touring_cycling', 'recumbent_cycling', 'cyclocross', 'road_biking',
+                   'gravel_biking', 'tandem_cycling', 'bmx', 'fat_bike', 'track_cycling', 'spin_bike']:
+        return 'cycling'
+    if type_key in ['swimming', 'pool_swimming', 'open_water_swimming', 'indoor_swimming', 'lap_swimming']:
+        return 'swimming'
+    if type_key in ['strength_training', 'weight_training', 'functional_strength_training', 'gym_strength_training', 'crossfit', 'hiit']:
+        return 'strength'
+    return 'other'
+
+def calculate_goals_progress(activities, config):
+    """Calcula progresso das metas baseado nas atividades"""
+    if not activities:
+        return {
+            'weekly': {'distance': 0, 'tss': 0, 'hours': 0, 'activities': 0},
+            'monthly': {'distance': 0, 'tss': 0, 'hours': 0, 'activities': 0},
+            'current_ctl': 0,
+            'current_atl': 0
+        }
+
+    now = datetime.now()
+    # Semana atual: segunda-feira da semana atual até domingo da semana atual
+    days_since_monday = now.isoweekday() - 1  # 0=segunda, 6=domingo
+    week_start = (now - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+    week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    weekly_activities = []
+    monthly_activities = []
+
+    for activity in activities:
+        try:
+            start_time_raw = activity.get('startTimeLocal', activity.get('startTime', '1900-01-01'))
+            activity_date = datetime.strptime(start_time_raw, "%Y-%m-%d %H:%M:%S")
+
+            if week_start <= activity_date <= week_end:
+                weekly_activities.append(activity)
+            elif activity_date >= month_start:
+                monthly_activities.append(activity)
+        except Exception as e:
+            continue
+
+    def calculate_metrics(activity_list):
+        total_distance = sum(float(a.get('distance', 0) or 0) / 1000 for a in activity_list)
+        total_tss = sum(float(a.get('tss', 0) or 0) for a in activity_list)
+        total_hours = sum(float(a.get('duration', 0) or 0) / 3600 for a in activity_list)
+        total_activities = len(activity_list)
+        return {
+            'distance': total_distance,
+            'tss': total_tss,
+            'hours': total_hours,
+            'activities': total_activities
+        }
+
+    weekly_metrics = calculate_metrics(weekly_activities)
+    monthly_metrics = calculate_metrics(monthly_activities)
+
+    metrics = load_metrics()
+    current_ctl = metrics[-1]['ctl'] if metrics else 0
+    current_atl = metrics[-1]['atl'] if metrics else 0
+
+    return {
+        'weekly': weekly_metrics,
+        'monthly': monthly_metrics,
+        'current_ctl': current_ctl,
+        'current_atl': current_atl
+    }
+
+def fetch_garmin_data(email, password, config):
+    """Busca dados do Garmin Connect com lógica inteligente de atualização"""
+    try:
+        from garminconnect import Garmin
+        client = Garmin(email, password)
+        client.login()
+
+        end_date = datetime.now().date()
+
+        # Carregar histórico salvo
+        old_activities = load_workouts()
+
+        if not old_activities:
+            # Se não há dados armazenados, buscar os últimos 42 dias
+            start_date = end_date - timedelta(days=42)
+            fetch_start_date = start_date
+        else:
+            # Se há dados, pegar o último dia mais atualizado, subtrair 1 dia e buscar até hoje
+            # Encontrar a data mais recente dos dados armazenados
+            latest_dates = []
+            for a in old_activities:
+                start_time = a.get('startTimeLocal', a.get('startTime', ''))
                 if start_time:
                     try:
                         if 'T' in start_time:
                             date_obj = datetime.strptime(start_time.split('T')[0], '%Y-%m-%d').date()
                         else:
                             date_obj = datetime.strptime(start_time.split(' ')[0], '%Y-%m-%d').date()
-                        
-                        key = (date_obj.year, date_obj.month)
-                        if key not in month_stats:
-                            month_stats[key] = 0
-                        month_stats[key] += 1
+                        latest_dates.append(date_obj)
                     except:
                         continue
-            
-            if month_stats:
-                # Encontrar o mês com mais dados
-                best_month = max(month_stats.items(), key=lambda x: x[1])
-                st.session_state.cal_year, st.session_state.cal_month = best_month[0]
-                st.success(f"📊 Mostrando dados de {calendar.month_name[st.session_state.cal_month]} {st.session_state.cal_year} ({best_month[1]} treinos)")
-                
-                # Refazer a filtragem com o novo mês
-                current_month_workouts = []
-                workouts_by_date = {}
-                for workout in workouts:
-                    start_time = workout.get('start_time', '')
-                    if start_time:
-                        try:
-                            if 'T' in start_time:
-                                date_obj = datetime.strptime(start_time.split('T')[0], '%Y-%m-%d').date()
-                            else:
-                                date_obj = datetime.strptime(start_time.split(' ')[0], '%Y-%m-%d').date()
-                            
-                            if date_obj.month == st.session_state.cal_month and date_obj.year == st.session_state.cal_year:
-                                date_key = date_obj.day
-                                if date_key not in workouts_by_date:
-                                    workouts_by_date[date_key] = []
-                                workouts_by_date[date_key].append(workout)
-                                current_month_workouts.append(workout)
-                        except:
-                            continue
 
-        # Calcular resumo do mês (otimizado - usar dados já processados)
-        total_workouts = len(current_month_workouts)
-        total_tss = sum(act['tss'] for act in current_month_workouts)
-        total_distance = sum(act['distance'] for act in current_month_workouts) / 1000
-        total_duration_sec = sum(act['duration'] for act in current_month_workouts)
-        
-        # Contar por modalidade (otimizado)
-        monthly_by_category = {}
-        for act in current_month_workouts:
-            cat = act['category']
-            if cat not in monthly_by_category:
-                monthly_by_category[cat] = {'count': 0, 'distance': 0, 'duration': 0}
-            monthly_by_category[cat]['count'] += 1
-            monthly_by_category[cat]['distance'] += act['distance'] / 1000
-            monthly_by_category[cat]['duration'] += act['duration']
-        
-        # Exibir resumo do mês no topo
-        st.markdown("### 📊 Resumo do Mês")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("🏋️ Treinos", f"{total_workouts}")
-        col2.metric("📊 TSS Total", f"{total_tss:.0f}")
-        col3.metric("📏 Distância", f"{total_distance:.1f} km")
-        col4.metric("⏱️ Tempo", format_duration_local(total_duration_sec))
-        
-        st.divider()
-        
-        # Renderizar calendário
-        st.markdown("""
-        <style>
-        /* Estilo dos cabeçalhos dos dias */
-        .cal-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 6px;
-            text-align: center;
-            font-weight: 700;
-            border-radius: 6px;
-            margin-bottom: 2px;
-            font-size: 0.75rem;
-            box-shadow: 0 2px 4px rgba(102, 126, 234, 0.2);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        /* Container de cada dia */
-        .cal-day-container {
-            background: white;
-            border: 1px solid #e5e7eb;
-            border-radius: 6px;
-            padding: 4px;
-            min-height: 80px;
-            margin-bottom: 2px;
-            transition: all 0.3s ease;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-        }
-        .cal-day-container:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            border-color: #c7d2fe;
-        }
-        
-        /* Dias vazios */
-        .cal-day-empty {
-            background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
-            border: 1px dashed #d1d5db;
-            border-radius: 6px;
-            min-height: 80px;
-            margin-bottom: 2px;
-        }
-        
-        /* Número do dia */
-        .cal-day-num {
-            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-            font-weight: 700;
-            font-size: 0.95rem;
-            color: #1e40af;
-            padding: 3px 8px;
-            border-radius: 6px;
-            display: inline-block;
-            margin-bottom: 4px;
-            float: right;
-            box-shadow: 0 1px 2px rgba(30, 64, 175, 0.1);
-        }
-        
-        /* Cabeçalho do dia */
-        .cal-day-header {
-            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-            color: #1e40af;
-            font-weight: 700;
-            font-size: 0.85rem;
-            padding: 3px 6px;
-            border-radius: 4px;
-            margin-bottom: 3px;
-            text-align: center;
-            box-shadow: 0 1px 2px rgba(59, 130, 246, 0.1);
-        }
-        
-        /* Card de resumo semanal */
-        .cal-week-summary {
-            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-            border: 1px solid #60a5fa;
-            border-radius: 6px;
-            padding: 5px;
-            font-size: 0.6rem;
-            min-height: 80px;
-            box-shadow: 0 4px 6px rgba(59, 130, 246, 0.15);
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            transition: all 0.3s ease;
-        }
-        .cal-week-summary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 12px rgba(59, 130, 246, 0.25);
-        }
-        
-        /* Responsividade para mobile */
-        @media (max-width: 768px) {
-            .cal-header {
-                font-size: 0.65rem;
-                padding: 4px 1px;
-                border-radius: 4px;
-            }
-            .cal-day-container {
-                min-height: 70px;
-                padding: 3px;
-                border-radius: 4px;
-            }
-            .cal-day-empty {
-                min-height: 70px;
-            }
-            .cal-day-num {
-                font-size: 0.75rem;
-                padding: 2px 5px;
-            }
-            .cal-day-header {
-                font-size: 0.7rem;
-                padding: 2px 5px;
-                margin-bottom: 2px;
-            }
-            .cal-week-summary {
-                min-height: 70px;
-                font-size: 0.55rem;
-                padding: 4px;
-            }
-        }
-        
-        /* Responsividade para telas muito pequenas */
-        @media (max-width: 480px) {
-            .cal-header {
-                font-size: 0.6rem;
-                padding: 3px 1px;
-            }
-            .cal-day-container {
-                min-height: 65px;
-                padding: 3px;
-            }
-            .cal-day-empty {
-                min-height: 65px;
-            }
-            .cal-day-num {
-                font-size: 0.7rem;
-                padding: 1px 4px;
-            }
-            .cal-day-header {
-                font-size: 0.65rem;
-                padding: 2px 4px;
-                margin-bottom: 2px;
-            }
-            .cal-week-summary {
-                min-height: 65px;
-                font-size: 0.5rem;
-                padding: 3px;
-            }
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        # Cabeçalho dos dias da semana + resumo
-        weekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom', 'Resumo']
-        cols = st.columns(8)
-        for i, day in enumerate(weekdays):
-            with cols[i]:
-                st.markdown(f"<div class='cal-header'>{day}</div>", unsafe_allow_html=True)
-        
-        # Renderizar semanas
-        for week_idx, week in enumerate(cal):
-            cols = st.columns(8)
-            
-            # Calcular resumo semanal (otimizado)
-            week_workouts = []
-            for day in week:
-                if day != 0 and day in workouts_by_date:
-                    week_workouts.extend(workouts_by_date[day])
+            if latest_dates:
+                most_recent_date = max(latest_dates)
+                # Subtrair 1 dia da data mais recente
+                fetch_start_date = most_recent_date - timedelta(days=1)
+            else:
+                # Fallback para 42 dias se não conseguir parsear datas
+                fetch_start_date = end_date - timedelta(days=42)
 
-            # Usar dados já calculados para resumo semanal
-            week_tss = sum(act['tss'] for act in week_workouts)
-            week_distance = sum(act['distance'] for act in week_workouts) / 1000
-            week_duration_sec = sum(act['duration'] for act in week_workouts)
-
-            # Agrupar por categoria (otimizado)
-            week_by_cat = {}
-            for act in week_workouts:
-                cat = act['category']
-                if cat not in week_by_cat:
-                    week_by_cat[cat] = {'count': 0, 'duration': 0, 'distance': 0}
-                week_by_cat[cat]['count'] += 1
-                week_by_cat[cat]['duration'] += act['duration']
-                week_by_cat[cat]['distance'] += act['distance'] / 1000
-            
-            # Renderizar dias
-            for i, day in enumerate(week):
-                with cols[i]:
-                    if day == 0:
-                        st.markdown("<div class='cal-day-empty'></div>", unsafe_allow_html=True)
-                    else:
-                        day_workouts = workouts_by_date.get(day, [])
-
-                        # Usar função otimizada para gerar HTML
-                        activities_html = generate_activity_html(day_workouts, colors, icons)
-
-                        day_html = f"<div class='cal-day-container'><div class='cal-day-header'>{day}</div>{activities_html}</div>"
-                        st.markdown(day_html, unsafe_allow_html=True)
-            
-            # Resumo semanal na última coluna
-            with cols[7]:
-                summary_html = "<div class='cal-week-summary' style='text-align:center;'>"
-                summary_html += f"<div style='font-weight:800;color:#1e40af;background:white;padding:2px;border-radius:3px;font-size:0.68rem;margin-bottom:1px;box-shadow:0 1px 2px rgba(30,64,175,0.1);'>S{week_idx+1}</div>"
-                summary_html += f"<div style='color:#1f2937;font-size:0.62rem;font-weight:600;margin-bottom:1px;'><span style='background:#dbeafe;padding:1px 4px;border-radius:3px;'>{len(week_workouts)} tr</span> • <span style='background:#fef3c7;padding:1px 4px;border-radius:3px;'>TSS {week_tss:.0f}</span></div>"
-                summary_html += f"<div style='color:#6b7280;font-size:0.57rem;font-weight:500;'>{week_distance:.1f}km • {format_duration_local(week_duration_sec)}</div>"
-                
-                if week_by_cat:
-                    summary_html += "<div style='padding-top:3px;border-top:1px solid #bfdbfe;text-align:left;margin-top:auto;'>"
-                    for cat, data in week_by_cat.items():
-                        icon = icons.get(cat, '📊')
-                        count = data['count']
-                        duration_sec = data['duration']
-                        distance_km = data['distance']
-                        summary_html += f"<div style='color:#374151;font-size:0.57rem;margin-bottom:1px;display:flex;justify-content:space-between;align-items:center;font-weight:500;'><span style='font-weight:700;'>{icon} {count}</span><span style='color:#6b7280;'>{format_duration_local(duration_sec)}</span><span style='color:#6b7280;'>{distance_km:.1f}km</span></div>"
-                    summary_html += "</div>"
-                
-                summary_html += "</div>"
-                st.markdown(summary_html, unsafe_allow_html=True)
-            
-            # Divisor discreto entre semanas (exceto após a última)
-            if week_idx < len(cal) - 1:
-                st.markdown("<div style='border-top:1px solid #e5e7eb;margin:3px 0;'></div>", unsafe_allow_html=True)
-
-# PAGE 3: METAS
-elif page == "🎯 Metas":
-    st.title("🎯 Configuração de Metas")
-
-    st.markdown("""
-    Defina suas metas de treinamento semanal, mensal e de performance.
-
-    **💡 Dicas:**
-    - **Metas realistas:** Comece com objetivos alcançáveis e aumente gradualmente
-    - **Equilíbrio:** Mantenha ATL abaixo de 80 para evitar overtraining
-    - **Progressão:** Acompanhe seu progresso e ajuste conforme necessário
-    """)
-
-    config = load_config()
-
-    # Metas semanais
-    st.subheader("📅 Metas Semanais")
-    col1, col2 = st.columns(2)
-    with col1:
-        weekly_distance_goal = st.number_input(
-            "Distância (km)",
-            min_value=0.0,
-            max_value=500.0,
-            value=float(config.get('weekly_distance_goal', 50.0)),
-            step=5.0,
-            help="Distância total semanal em quilômetros"
-        )
-        weekly_tss_goal = st.number_input(
-            "TSS Total",
-            min_value=0,
-            max_value=2000,
-            value=int(config.get('weekly_tss_goal', 300)),
-            help="Training Stress Score semanal total"
-        )
-    with col2:
-        weekly_hours_goal = st.number_input(
-            "Horas de Treino",
-            min_value=0.0,
-            max_value=50.0,
-            value=float(config.get('weekly_hours_goal', 7.0)),
-            step=0.5,
-            help="Tempo total de treinamento semanal em horas"
-        )
-        weekly_activities_goal = st.number_input(
-            "Número de Atividades",
-            min_value=0,
-            max_value=20,
-            value=int(config.get('weekly_activities_goal', 5)),
-            help="Número de sessões de treino por semana"
-        )
-
-    # Metas mensais
-    st.subheader("📊 Metas Mensais")
-    col1, col2 = st.columns(2)
-    with col1:
-        monthly_distance_goal = st.number_input(
-            "Distância (km)",
-            min_value=0.0,
-            max_value=2000.0,
-            value=float(config.get('monthly_distance_goal', 200.0)),
-            step=10.0,
-            help="Distância total mensal em quilômetros"
-        )
-        monthly_tss_goal = st.number_input(
-            "TSS Total",
-            min_value=0,
-            max_value=8000,
-            value=int(config.get('monthly_tss_goal', 1200)),
-            help="Training Stress Score mensal total"
-        )
-    with col2:
-        monthly_hours_goal = st.number_input(
-            "Horas de Treino",
-            min_value=0.0,
-            max_value=200.0,
-            value=float(config.get('monthly_hours_goal', 30.0)),
-            step=1.0,
-            help="Tempo total de treinamento mensal em horas"
-        )
-        monthly_activities_goal = st.number_input(
-            "Número de Atividades",
-            min_value=0,
-            max_value=100,
-            value=int(config.get('monthly_activities_goal', 20)),
-            help="Número de sessões de treino por mês"
-        )
-
-    # Metas de performance
-    st.subheader("🏆 Metas de Performance")
-    col1, col2 = st.columns(2)
-    with col1:
-        target_ctl = st.number_input(
-            "CTL Alvo (Forma Física)",
-            min_value=0,
-            max_value=150,
-            value=int(config.get('target_ctl', 50)),
-            help="Nível de forma física desejado (Chronic Training Load)"
-        )
-    with col2:
-        target_atl_max = st.number_input(
-            "ATL Máximo Permitido",
-            min_value=0,
-            max_value=200,
-            value=int(config.get('target_atl_max', 80)),
-            help="Limite máximo de fadiga aguda para evitar overtraining"
-        )
-
-    # Botão para salvar metas
-    st.markdown("---")
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("💾 Salvar Metas", use_container_width=True):
-            # Carregar config atual
-            current_config = load_config()
-
-            # Atualizar apenas as metas
-            updated_config = current_config.copy()
-            updated_config.update({
-                # Metas semanais
-                'weekly_distance_goal': weekly_distance_goal,
-                'weekly_tss_goal': weekly_tss_goal,
-                'weekly_hours_goal': weekly_hours_goal,
-                'weekly_activities_goal': weekly_activities_goal,
-                # Metas mensais
-                'monthly_distance_goal': monthly_distance_goal,
-                'monthly_tss_goal': monthly_tss_goal,
-                'monthly_hours_goal': monthly_hours_goal,
-                'monthly_activities_goal': monthly_activities_goal,
-                # Metas de performance
-                'target_ctl': target_ctl,
-                'target_atl_max': target_atl_max
-            })
-
-            save_config(updated_config)
-            st.success("✅ Metas salvas com sucesso!")
-            st.balloons()
-
-    # Mostrar progresso atual
-    st.markdown("---")
-    st.subheader("📈 Progresso Atual")
-
-    workouts = load_workouts()
-    if workouts:
-        goals_progress = calculate_goals_progress(workouts, config)
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.markdown("**Semanal**")
-            weekly_distance = goals_progress['weekly']['distance']
-            weekly_distance_goal_val = config.get('weekly_distance_goal', 50.0)
-            distance_pct = min(100, (weekly_distance / weekly_distance_goal_val * 100) if weekly_distance_goal_val > 0 else 0)
-
-            st.metric(
-                "🏃 Distância",
-                f"{weekly_distance:.1f}km / {weekly_distance_goal_val:.0f}km",
-                f"{distance_pct:.1f}%"
+        # Buscar atividades do período determinado
+        if fetch_start_date <= end_date:
+            new_activities = client.get_activities_by_date(
+                fetch_start_date.isoformat(),
+                end_date.isoformat()
             )
+        else:
+            new_activities = []
 
-            weekly_tss = goals_progress['weekly']['tss']
-            weekly_tss_goal_val = config.get('weekly_tss_goal', 300)
-            tss_pct = min(100, (weekly_tss / weekly_tss_goal_val * 100) if weekly_tss_goal_val > 0 else 0)
+        # Unir atividades antigas com novas, sobrescrevendo duplicatas
+        # Usar activityId ou startTimeLocal como chave única
+        activities_dict = {}
 
-            st.metric(
-                "🎯 TSS",
-                f"{weekly_tss:.0f} / {weekly_tss_goal_val:.0f}",
-                f"{tss_pct:.1f}%"
-            )
+        # Primeiro, adicionar atividades antigas
+        for a in old_activities:
+            key = a.get('activityId') or a.get('activityUUID') or a.get('startTimeLocal') or a.get('startTime')
+            if key:
+                activities_dict[key] = a
 
-        with col2:
-            st.markdown("**Mensal**")
-            monthly_distance = goals_progress['monthly']['distance']
-            monthly_distance_goal_val = config.get('monthly_distance_goal', 200.0)
-            monthly_distance_pct = min(100, (monthly_distance / monthly_distance_goal_val * 100) if monthly_distance_goal_val > 0 else 0)
+        # Depois, adicionar/sobrescrever com atividades novas
+        for a in new_activities:
+            key = a.get('activityId') or a.get('activityUUID') or a.get('startTimeLocal') or a.get('startTime')
+            if key:
+                activities_dict[key] = a
 
-            st.metric(
-                "🏃 Distância",
-                f"{monthly_distance:.1f}km / {monthly_distance_goal_val:.0f}km",
-                f"{monthly_distance_pct:.1f}%"
-            )
+        # Converter de volta para lista
+        all_activities = list(activities_dict.values())
 
-            monthly_tss = goals_progress['monthly']['tss']
-            monthly_tss_goal_val = config.get('monthly_tss_goal', 1200)
-            monthly_tss_pct = min(100, (monthly_tss / monthly_tss_goal_val * 100) if monthly_tss_goal_val > 0 else 0)
+        # Enriquecer atividades com TSS variants (sempre recalcular)
+        enriched_activities = []
+        for a in all_activities:
+            a2 = dict(a)
+            tss_data = compute_tss_variants(a2, config)
+            # SEMPRE recalcular para garantir que usa a config mais recente
+            for k, v in tss_data.items():
+                a2[k] = v
+            enriched_activities.append(a2)
 
-            st.metric(
-                "🎯 TSS",
-                f"{monthly_tss:.0f} / {monthly_tss_goal_val:.0f}",
-                f"{monthly_tss_pct:.1f}%"
-            )
-    else:
-        st.info("🔄 Sincronize seus dados do Garmin Connect para ver o progresso atual.")
+        # Salvar TODAS as atividades (não filtrar por 42 dias aqui)
+        save_workouts(enriched_activities)
 
-# PAGE 3: CONFIGURAÇÃO
-elif page == "⚙️ Configuração":
-    st.title("⚙️ Configuração")
-    
-    st.markdown("""
-    Configure suas credenciais do Garmin Connect e parâmetros de fitness.
-    
-    **⚠️ Segurança:** Suas credenciais são armazenadas **apenas no seu dispositivo** e 
-    nunca são enviadas para servidores. Você pode deletá-las a qualquer momento.
-    """)
-    
-    # Seção de Credenciais
-    st.subheader("🔐 Credenciais Garmin Connect")
-    st.info("Seus dados de login são armazenados de forma segura apenas neste dispositivo.")
-    
-    creds = load_credentials()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        email = st.text_input(
-            "Email Garmin Connect",
-            value=creds.get('email', ''),
-            key='email_input'
-        )
-    with col2:
-        password = st.text_input(
-            "Senha Garmin Connect",
-            value=creds.get('password', ''),
-            type="password"
-        )
-
-    st.markdown("""
-    ### 🏋️ Parâmetros de Fitness
-    
-    **💡 Sobre o hrTSS:** O cálculo do hrTSS usa o LTHR (Limiar de Frequência Cardíaca) como referência, 
-    seguindo a fórmula do TrainingPeaks. Configure corretamente seu LTHR para obter valores precisos.
-    """)
-    
-    config = load_config()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        age = st.number_input(
-            "Idade",
-            min_value=15,
-            max_value=100,
-            value=config.get('age', 29)
-        )
-        ftp = st.number_input(
-            "FTP (Functional Threshold Power) - Watts",
-            min_value=50,
-            max_value=500,
-            value=config.get('ftp', 250),
-            step=5
-        )
-        hr_rest = st.number_input(
-            "Frequência Cardíaca em Repouso (bpm)",
-            min_value=40,
-            max_value=100,
-            value=config.get('hr_rest', 50)
-        )
-        hr_threshold = st.number_input(
-            "LTHR - Frequência Cardíaca de Limiar (bpm)",
-            min_value=100,
-            max_value=200,
-            value=config.get('hr_threshold', 162),
-            help="Usado para calcular hrTSS (TrainingPeaks)"
-        )
-    
-    with col2:
-        hr_max = st.number_input(
-            "Frequência Cardíaca Máxima (bpm)",
-            min_value=150,
-            max_value=220,
-            value=config.get('hr_max', 191)
-        )
-        pace_threshold = st.text_input(
-            "Limiar de Pace - Corrida (mm:ss)",
-            value=config.get('pace_threshold', '4:22')
-        )
-        swim_pace_threshold = st.text_input(
-            "Limiar de Pace - Natação (mm:ss)",
-            value=config.get('swim_pace_threshold', '2:01')
-        )
-    
-    # Botão para salvar
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("💾 Salvar Configurações", use_container_width=True):
-            # Salvar credenciais
-            save_credentials(email, password)
-            
-            # Salvar config
-            new_config = {
-                'age': age,
-                'ftp': ftp,
-                'hr_rest': hr_rest,
-                'hr_max': hr_max,
-                'hr_threshold': hr_threshold,
-                'pace_threshold': pace_threshold,
-                'swim_pace_threshold': swim_pace_threshold
-            }
-            save_config(new_config)
-            
-            st.success("✅ Configurações salvas com sucesso!")
-    
-    with col2:
-        if st.button("🗑️ Deletar Credenciais", use_container_width=True):
-            if CREDENTIALS_FILE.exists():
-                os.remove(CREDENTIALS_FILE)
-            st.success("✅ Credenciais deletadas com sucesso!")
-            st.rerun()
-    
-
-    with col3:
-        if st.button("📂 Ver Local de Armazenamento", use_container_width=True):
-            st.info(f"Arquivos armazenados em:\n`{LOCAL_STORAGE_DIR}`")
-
-    # Botão de reiniciar dados do dashboard
-    st.markdown("---")
-    st.subheader("Reiniciar Dados do Dashboard")
-    st.caption("Apaga todos os dados locais de métricas e treinos. Não afeta configurações.")
-    if st.button('🧹 Reiniciar Dados do Dashboard', key='reset_config', use_container_width=True):
-        def reset_dashboard_data():
-            for f in [METRICS_FILE, WORKOUTS_FILE]:
+        # Para métricas do Dashboard, usar apenas os últimos 42 dias
+        dashboard_cutoff = end_date - timedelta(days=42)
+        dashboard_activities = []
+        for a in enriched_activities:
+            start_time = a.get('startTimeLocal', a.get('startTime', ''))
+            if start_time:
                 try:
-                    if f.exists():
-                        f.unlink()
-                except Exception as e:
-                    st.warning(f"Erro ao apagar {f}: {e}")
-        reset_dashboard_data()
-        st.success('Dados reiniciados! Recarregue a página.')
-
-
-    # ============ BLOCO DE ATUALIZAÇÃO DE DADOS INCORPORADO ============
-    st.markdown("---")
-    st.header("🔄 Atualizar Dados do Garmin Connect")
-    st.markdown("""
-    Clique no botão abaixo para sincronizar seus dados com Garmin Connect.
-    Este processo busca todas as atividades dos últimos 42 dias e recalcula 
-    as métricas de fitness (CTL, ATL, TSB).
-    """)
-    creds = load_credentials()
-    if not creds.get('email') or not creds.get('password'):
-        st.warning("⚠️ Credenciais não configuradas. Preencha acima para adicionar suas credenciais do Garmin Connect.")
-    else:
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.button("🔄 Atualizar Dados Agora", use_container_width=True):
-                with st.spinner("Sincronizando com Garmin Connect..."):
-                    config = load_config()
-                    success, message = fetch_garmin_data(
-                        creds['email'],
-                        creds['password'],
-                        config
-                    )
-                    if success:
-                        st.success(message)
-                        st.session_state.update_status = ("success", message)
-                        time.sleep(1)
-                        st.rerun()
+                    if 'T' in start_time:
+                        activity_date = datetime.strptime(start_time.split('T')[0], '%Y-%m-%d').date()
                     else:
-                        st.error(message)
-                        st.session_state.update_status = ("error", message)
-        with col2:
-            workouts = load_workouts()
-            if workouts:
-                st.info(f"📊 Dados disponíveis:\n- **{len(workouts)}** atividades carregadas\n- Última atualização: Verifique a página Dashboard")
+                        activity_date = datetime.strptime(start_time.split(' ')[0], '%Y-%m-%d').date()
+
+                    if activity_date >= dashboard_cutoff:
+                        dashboard_activities.append(a)
+                except:
+                    # Se não conseguir parsear, incluir na dúvida
+                    dashboard_activities.append(a)
+
+        # Calcular métricas apenas com dados dos últimos 42 dias
+        metrics = calculate_fitness_metrics(dashboard_activities, config, dashboard_cutoff, end_date)
+        save_metrics(metrics)
+
+        new_count = len(new_activities)
+        total_count = len(enriched_activities)
+        dashboard_count = len(dashboard_activities)
+
+        return True, f"✅ Dados atualizados! {new_count} novas atividades, {total_count} total armazenadas, {dashboard_count} para Dashboard (42 dias)."
+
+    except ImportError:
+        return False, "❌ Erro: garminconnect não instalado. Instale com: pip install garminconnect"
+    except Exception as e:
+        return False, f"❌ Erro ao buscar dados: {str(e)}"
+
+def compute_tss_variants(activity: dict, config: dict) -> dict:
+    """Calcula TSS (power), rTSS (pace), sTSS (swim pace) e hrTSS (HR) quando possível.
+
+    Observação: são aproximações consistentes com o modelo $TSS \\approx horas \\cdot IF^2 \\cdot 100$.
+    """
+    duration_sec = float(activity.get('duration', 0) or 0)
+    if duration_sec <= 0:
+        return {'tss': 0.0, 'category': _activity_category(activity)}
+
+    duration_h = duration_sec / 3600.0
+    category = _activity_category(activity)
+
+    # Calcular TRIMP primeiro
+    trimp = calculate_trimp(activity, config)
+
+    # Para atividades com dados de potência (ciclismo principalmente)
+    if category == 'cycling':
+        ftp = float(config.get('ftp', 0) or 0)
+        np_power = activity.get('normalizedPower') or activity.get('normPower')
+        avg_power = activity.get('averagePower') or activity.get('avgPower')
+        power = float(np_power or avg_power or 0)
+
+        if ftp > 0 and power > 0:
+            if_ = power / ftp
+            tss = duration_h * (if_ ** 2) * 100.0
+        else:
+            # Fallback para TRIMP se não houver dados de potência
+            tss = trimp
+
+    # Para corrida
+    elif category == 'running':
+        avg_speed = float(activity.get('averageSpeed', 0) or 0)
+        if avg_speed > 0:
+            pace_s_km = 1000.0 / avg_speed
+            threshold_sec = _parse_mmss_to_seconds(config.get('pace_threshold', '5:00'), default_seconds=300)
+            if threshold_sec > 0 and pace_s_km > 0:
+                intensity = float(threshold_sec) / float(pace_s_km)
+                tss = duration_h * (intensity ** 2) * 100.0
             else:
-                st.info("📊 Nenhum dado carregado ainda.")
-        if st.session_state.update_status:
-            status_type, message = st.session_state.update_status
-            if status_type == "success":
-                st.success(message)
+                tss = trimp
+        else:
+            tss = trimp
+
+    # Para natação
+    elif category == 'swimming':
+        distance_m = float(activity.get('distance', 0) or 0)
+        if distance_m > 0:
+            pace_sec_100m = (duration_sec / distance_m) * 100.0
+            threshold_sec = _parse_mmss_to_seconds(config.get('swim_pace_threshold', '2:30'), default_seconds=150)
+            if threshold_sec > 0 and pace_sec_100m > 0:
+                intensity = float(threshold_sec) / float(pace_sec_100m)
+                tss = (duration_h * (intensity ** 2) * 100.0) / 3.5
             else:
-                st.error(message)
-    st.subheader("📖 Instruções")
-    st.markdown("""
-    1. **Configure suas credenciais** acima
-    2. **Clique em "Atualizar Dados Agora"** para sincronizar
-    3. **Visualize os resultados** na página Dashboard
+                tss = trimp
+        else:
+            tss = trimp
+
+    # Para outras atividades (força, etc.)
+    else:
+        tss = trimp
+
+    return {'tss': tss, 'category': category}
+
+def calculate_fitness_metrics(activities, config, start_date, end_date):
+    """Calcula métricas de fitness (CTL, ATL, TSB) baseadas nas atividades"""
+    # Agrupar TRIMP por data
+    daily_loads = {}
+    for activity in activities:
+        start_time = activity.get('startTimeLocal', '')
+        if start_time:
+            try:
+                # startTimeLocal pode ser "2025-12-21 11:43:55" ou com Z
+                if 'T' not in start_time:
+                    start_time = start_time.replace(' ', 'T')
+                if not start_time.endswith('Z'):
+                    start_time += 'Z'
+                date = datetime.fromisoformat(start_time.replace('Z', '+00:00')).date()
+                trimp = calculate_trimp(activity, config)
+                daily_loads[date] = daily_loads.get(date, 0) + trimp
+            except ValueError as e:
+                continue
     
-    A aplicação buscará todas as atividades dos últimos 42 dias e calculará:
-    - **CTL (Forma Física)**: Carga de treino crônica (média de 42 dias)
-    - **ATL (Fadiga)**: Carga de treino aguda (média de 7 dias)
-    - **TSB (Equilíbrio)**: Diferença entre forma e fadiga (CTL - ATL)
-    """)
+    # Lista de dias
+    days = []
+    current_date = start_date
+    while current_date <= end_date:
+        days.append(current_date)
+        current_date += timedelta(days=1)
+    
+    # Calcular métricas cumulativas
+    metrics = []
+    ctl = 0.0
+    atl = 0.0
+    
+    for day in days:
+        daily_trimp = daily_loads.get(day, 0.0)
+        
+        # CTL (Chronic Training Load) - tempo de meia-vida de 42 dias
+        ctl = ctl + (daily_trimp - ctl) / 42.0
+        
+        # ATL (Acute Training Load) - tempo de meia-vida de 7 dias
+        atl = atl + (daily_trimp - atl) / 7.0
+        
+        # TSB (Training Stress Balance) = CTL - ATL
+        tsb = ctl - atl
+        
+        metrics.append({
+            'date': day.isoformat(),
+            'ctl': round(ctl, 1),
+            'atl': round(atl, 1),
+            'tsb': round(tsb, 1),
+            'daily_load': round(daily_trimp, 1)
+        })
+    
+    return metrics
+
+def create_modality_subplot_chart(data, modality_info, modality_key):
+    """Cria gráfico com subplots 2x2 para evolução semanal da modalidade"""
+    
+    # Preparar dados
+    semanas = [f'S{i+1}' for i in range(len(data))]
+    distancia = [week['distance'] for week in data]
+    tss = [week['tss'] for week in data]
+    horas = [week['duration'] for week in data]
+    atividades = [week['activities'] for week in data]
+    
+    # Cores temáticas por modalidade
+    cores_modalidade = {
+        'swimming': {'primary': '#007bff', 'secondary': '#cce5ff'},  # Azul - Natação
+        'cycling': {'primary': '#28a745', 'secondary': '#d4edda'},   # Verde - Ciclismo
+        'running': {'primary': '#fd7e14', 'secondary': '#ffe5d0'},   # Laranja - Corrida
+        'strength': {'primary': '#6f42c1', 'secondary': '#e7d9ff'}   # Roxo - Musculação
+    }
+    
+    cores = cores_modalidade.get(modality_key, {'primary': '#666', 'secondary': '#ccc'})
+    
+    # Criar subplot com 2x2
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=('Distância por Semana', 'TSS por Semana', 'Horas por Semana', 'Atividades por Semana'),
+        specs=[[{"secondary_y": False}, {"secondary_y": False}],
+               [{"secondary_y": False}, {"secondary_y": False}]]
+    )
+    
+    # Gráfico 1: Distância
+    fig.add_trace(
+        go.Bar(
+            x=semanas,
+            y=distancia,
+            name='Distância',
+            marker_color=cores['primary'],
+            marker_line_color=cores['secondary'],
+            marker_line_width=1,
+            hovertemplate='<b>%{x}</b><br>Distância: %{y:.1f} km<extra></extra>'
+        ),
+        row=1, col=1
+    )
+    
+    # Gráfico 2: TSS
+    fig.add_trace(
+        go.Scatter(
+            x=semanas,
+            y=tss,
+            mode='lines+markers',
+            name='TSS',
+            line=dict(color=cores['primary'], width=3),
+            marker=dict(size=8, color=cores['primary'], symbol='circle'),
+            hovertemplate='<b>%{x}</b><br>TSS: %{y:.0f}<extra></extra>'
+        ),
+        row=1, col=2
+    )
+    
+    # Gráfico 3: Horas
+    fig.add_trace(
+        go.Scatter(
+            x=semanas,
+            y=horas,
+            mode='lines+markers',
+            name='Horas',
+            line=dict(color=cores['primary'], width=3, dash='dot'),
+            marker=dict(size=8, color=cores['primary'], symbol='square'),
+            hovertemplate='<b>%{x}</b><br>Horas: %{customdata}<extra></extra>',
+            customdata=[format_hours_decimal(h) for h in horas]
+        ),
+        row=2, col=1
+    )
+    
+    # Gráfico 4: Atividades
+    fig.add_trace(
+        go.Bar(
+            x=semanas,
+            y=atividades,
+            name='Atividades',
+            marker_color=cores['secondary'],
+            marker_line_color=cores['primary'],
+            marker_line_width=1,
+            hovertemplate='<b>%{x}</b><br>Atividades: %{y}<extra></extra>'
+        ),
+        row=2, col=2
+    )
+    
+    # Configurar layout
+    fig.update_layout(
+        height=600,
+        showlegend=False,
+        font=dict(family='Inter, -apple-system, sans-serif', size=11),
+        plot_bgcolor='rgba(248,249,250,0.5)',
+        paper_bgcolor='white',
+        margin=dict(l=40, r=40, t=60, b=40)
+    )
+    
+    # Configurar eixos
+    fig.update_xaxes(showgrid=False, row=1, col=1)
+    fig.update_yaxes(title_text='Distância (km)', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=1, col=1)
+    
+    fig.update_xaxes(showgrid=False, row=1, col=2)
+    fig.update_yaxes(title_text='TSS', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=1, col=2)
+    
+    fig.update_xaxes(showgrid=False, row=2, col=1)
+    fig.update_yaxes(title_text='Horas', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=2, col=1)
+    
+    fig.update_xaxes(showgrid=False, row=2, col=2)
+    fig.update_yaxes(title_text='Atividades', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=2, col=2)
+    
+    return fig
+
+def create_modality_trend_chart(data, modality_info, modality_name):
+    """Cria gráfico de tendência consolidada com eixo duplo"""
+    
+    # Preparar dados
+    semanas = [f'S{i+1}' for i in range(len(data))]
+    distancia = [week['distance'] for week in data]
+    tss = [week['tss'] for week in data]
+    
+    # Cores temáticas por modalidade
+    cores_modalidade = {
+        'swimming': {'primary': '#007bff', 'secondary': '#cce5ff'},  # Azul - Natação
+        'cycling': {'primary': '#28a745', 'secondary': '#d4edda'},   # Verde - Ciclismo
+        'running': {'primary': '#fd7e14', 'secondary': '#ffe5d0'},   # Laranja - Corrida
+        'strength': {'primary': '#6f42c1', 'secondary': '#e7d9ff'}   # Roxo - Musculação
+    }
+    
+    modality_key = modality_info.get('key', 'unknown')
+    cores = cores_modalidade.get(modality_key, {'primary': '#666', 'secondary': '#ccc'})
+    
+    # Gráfico de tendência
+    fig = go.Figure()
+    
+    # Área preenchida para distância
+    fig.add_trace(
+        go.Scatter(
+            x=semanas,
+            y=distancia,
+            mode='lines+markers',
+            name='Distância (km)',
+            line=dict(color=cores['primary'], width=3),
+            marker=dict(size=6, color=cores['primary']),
+            fill='tozeroy',
+            fillcolor='rgba(25, 118, 210, 0.2)',  # Azul com transparência
+            hovertemplate='<b>Distância</b><br>Semana %{x}<br>%{y:.1f} km<extra></extra>'
+        )
+    )
+    
+    # Linha para TSS
+    fig.add_trace(
+        go.Scatter(
+            x=semanas,
+            y=tss,
+            mode='lines+markers',
+            name='TSS',
+            line=dict(color=cores['secondary'], width=3, dash='dash'),
+            marker=dict(size=6, color=cores['secondary'], symbol='diamond'),
+            yaxis='y2',
+            hovertemplate='<b>TSS</b><br>Semana %{x}<br>%{y:.0f}<extra></extra>'
+        )
+    )
+    
+    # Configurar layout com eixo duplo
+    fig.update_layout(
+        title=f'Tendência de Progresso - {modality_name}',
+        height=400,
+        font=dict(family='Inter, -apple-system, sans-serif', size=12),
+        plot_bgcolor='rgba(248,249,250,0.5)',
+        paper_bgcolor='white',
+        hovermode='x unified',
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='center',
+            x=0.5
+        ),
+        margin=dict(l=50, r=50, t=80, b=50),
+        yaxis=dict(
+            title='Distância (km)',
+            tickfont=dict(color=cores['primary'])
+        ),
+        yaxis2=dict(
+            title='TSS',
+            tickfont=dict(color=cores['secondary']),
+            anchor='x',
+            overlaying='y',
+            side='right'
+        )
+    )
+    
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=True, gridcolor='rgba(0,0,0,0.1)')
+    
+    return fig
+
+# Callback para modo escuro com persistência
+@app.callback(
+    [Output('dark-mode-store', 'data'),
+     Output('dark-mode-toggle', 'children'),
+     Output('app-container', 'style')],
+    Input('dark-mode-toggle', 'n_clicks'),
+    State('dark-mode-store', 'data'),
+    prevent_initial_call=True
+)
+def toggle_dark_mode(n_clicks, current_mode):
+    """Alterna entre modo claro e escuro"""
+    new_mode = not current_mode
+    button_text = '☀️ Modo Claro' if new_mode else '🌙 Modo Escuro'
+    
+    if new_mode:
+        container_style = {
+            'backgroundColor': '#242428',
+            'color': '#FFFFFF',
+            'minHeight': '100vh',
+            'transition': 'all 0.3s ease'
+        }
+    else:
+        container_style = {
+            'backgroundColor': 'white',
+            'color': '#212529',
+            'minHeight': '100vh',
+            'transition': 'all 0.3s ease'
+        }
+    
+    return new_mode, button_text, container_style
+
+# Callback para atualizar badge de última atualização
+@app.callback(
+    Output('last-update-badge', 'children'),
+    Input('tabs', 'active_tab')
+)
+def update_last_sync_badge(active_tab):
+    """Atualiza o badge mostrando quando foi a última sincronização"""
+    try:
+        if METRICS_FILE.exists():
+            modified_time = datetime.fromtimestamp(METRICS_FILE.stat().st_mtime)
+            time_diff = datetime.now() - modified_time
+            
+            if time_diff.total_seconds() < 60:
+                time_str = "agora há pouco"
+            elif time_diff.total_seconds() < 3600:
+                mins = int(time_diff.total_seconds() / 60)
+                time_str = f"há {mins} min"
+            elif time_diff.total_seconds() < 86400:
+                hours = int(time_diff.total_seconds() / 3600)
+                time_str = f"há {hours}h"
+            else:
+                days = int(time_diff.total_seconds() / 86400)
+                time_str = f"há {days} dia(s)"
+            
+            return f"🔄 Última atualização: {time_str}"
+        else:
+            return "🔄 Nenhuma sincronização ainda"
+    except Exception as e:
+        return "🔄 Status desconhecido"
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=8050)
+
+
+
+
+

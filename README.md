@@ -1,10 +1,10 @@
 # 💪 Fitness Metrics Dashboard
 
-Um dashboard interativo para monitoramento de métricas de fitness com integração ao Garmin Connect. Acompanhe seu progresso através das métricas CTL (Chronic Training Load), ATL (Acute Training Load) e TSB (Training Stress Balance).
+Um dashboard interativo moderno para monitoramento de métricas de fitness com integração ao Garmin Connect. Acompanhe seu progresso através das métricas CTL (Chronic Training Load), ATL (Acute Training Load) e TSB (Training Stress Balance).
 
 ## 📋 Visão Geral
 
-Este aplicativo Streamlit permite que atletas monitorem seu estado de forma física através de métricas científicas baseadas em dados de atividades físicas. A integração com Garmin Connect permite sincronização automática de dados de treino.
+Este aplicativo Dash permite que atletas monitorem seu estado de forma física através de métricas científicas baseadas em dados de atividades físicas. A integração com Garmin Connect permite sincronização automática de dados de treino.
 
 ### ✨ Funcionalidades Principais
 
@@ -14,6 +14,7 @@ Este aplicativo Streamlit permite que atletas monitorem seu estado de forma fís
 - **🎯 Metas Personalizáveis**: Configure e acompanhe metas semanais e mensais
 - **⚙️ Configuração Segura**: Armazenamento local de credenciais (nunca enviado para servidores)
 - **📱 Design Responsivo**: Funciona em desktop, tablet e dispositivos móveis
+- **🎨 UX Moderna**: Interface rica e bonita com componentes visuais avançados
 
 ## 🚀 Instalação e Execução
 
@@ -37,12 +38,12 @@ Este aplicativo Streamlit permite que atletas monitorem seu estado de forma fís
 
 3. **Execute o aplicativo**
    ```bash
-   streamlit run app.py
+   python app.py
    ```
 
 4. **Acesse no navegador**
-   - Local: http://localhost:8501
-   - Rede: http://[seu-ip]:8501
+   - Local: http://127.0.0.1:8050
+   - Rede: http://[seu-ip]:8050
 
 ## 📊 Métricas de Fitness
 
