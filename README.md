@@ -9,6 +9,7 @@ Este aplicativo Dash permite que atletas monitorem seu estado de forma física a
 ### ✨ Funcionalidades Principais
 
 - **📊 Dashboard Interativo**: Visualize seu estado atual de forma física com métricas CTL, ATL e TSB
+- **🤖 Chat IA**: Consulte um assistente inteligente sobre seus dados de treino e progresso
 - **🔄 Sincronização Garmin**: Importe automaticamente atividades dos últimos 42 dias
 - **📅 Calendário de Treinos**: Veja seu histórico de atividades em formato de calendário
 - **🎯 Metas Personalizáveis**: Configure e acompanhe metas semanais e mensais
@@ -65,6 +66,62 @@ Este aplicativo Dash permite que atletas monitorem seu estado de forma física a
   - **Negativo**: Período de recuperação
   - **Zero**: Equilíbrio ideal
 
+## 🤖 Chat com IA Especialista em Triathlon
+
+O assistente de IA integrado é um **treinador especialista em triathlon**, com formação em fisiologia do exercício e ciência do treinamento esportivo. Ele analisa seus dados usando métodos científicos específicos para atletas de triathlon, considerando as três modalidades (natação, ciclismo e corrida).
+
+### 🏊‍♂️ **Especialização em Triathlon:**
+
+- **Análise integrada** das três modalidades
+- **Periodização científica** baseada em macrociclos
+- **Adaptações fisiológicas** específicas do treinamento cruzado
+- **Equilíbrio de volume** entre natação, ciclismo e corrida
+- **Avaliação de risco** de overtraining em atletas de endurance
+- **Recomendações baseadas em evidências** científicas
+
+### Configuração da IA
+
+1. **Obtenha uma chave API gratuita**:
+   - Acesse [https://console.groq.com/](https://console.groq.com/)
+   - Crie uma conta gratuita
+   - Gere uma chave API
+
+2. **Configure no aplicativo**:
+   ```bash
+   # Copie o arquivo de exemplo
+   cp .env.example .env
+   
+   # Edite o arquivo .env e adicione sua chave
+   GROQ_API_KEY=sua_chave_api_aqui
+   ```
+
+3. **Reinicie o aplicativo** para carregar a configuração
+
+**✅ Status**: Configuração da API Groq concluída e testada!
+
+### Como Usar o Chat IA
+
+- Acesse a aba **"🤖 AI Chat"** no aplicativo
+- Digite suas perguntas sobre:
+  - Estado atual de forma física
+  - Análise de treinos recentes
+  - Recomendações de carga de treino
+  - Progresso em direção às metas
+  - Interpretação de métricas
+
+### Exemplos de Perguntas
+
+- "Como está meu equilíbrio entre as três modalidades?"
+- "Preciso ajustar minha periodização de treinamento?"
+- "Como está minha preparação para uma prova de triathlon?"
+- "Qual modalidade precisa de mais foco?"
+- "Como otimizar meu treinamento de transição?"
+- "Análise da distribuição de volume por modalidade"
+- "Recomendações para melhorar minha economia de corrida"
+- "Como está minha adaptação ao treinamento cruzado?"
+
+**Nota**: A IA usa o modelo Llama-3.1-8B da Groq, que é gratuito e poderoso para análise de dados de fitness.
+
 ## 🔧 Configuração
 
 ### Credenciais Garmin Connect
@@ -114,6 +171,10 @@ streamlit>=1.28.0
 garminconnect>=0.2.30
 pandas>=2.0.0
 plotly>=5.14.0
+groq>=0.37.1
+langchain>=1.2.0
+langchain-groq>=1.1.1
+python-dotenv>=1.1.1
 ```
 
 ## 🛠️ Desenvolvimento

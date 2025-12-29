@@ -6,3 +6,7 @@ garminconnect>=0.2.30
 matplotlib>=3.7.0
 flask>=2.3.0
 werkzeug>=2.3.0
+groq>=0.4.0
+langchain>=0.1.0
+langchain-groq>=0.1.0
+python-dotenv>=1.0.0

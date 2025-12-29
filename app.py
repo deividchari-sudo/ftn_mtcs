@@ -13,6 +13,7 @@ from pathlib import Path
 import calendar
 
 from utils import *
+from ai_chat import FitnessAI
 
 # Função auxiliar para converter horas decimais em hh:mm:ss
 def format_hours_to_hms(hours):
@@ -1130,6 +1131,7 @@ app.layout = html.Div(id='app-container', children=[
         dbc.Tab(label="📊 Dashboard", tab_id="dashboard"),
         dbc.Tab(label="📅 Calendário", tab_id="calendar"),
         dbc.Tab(label="🎯 Metas", tab_id="goals"),
+        dbc.Tab(label="🤖 AI Chat", tab_id="ai_chat"),
         dbc.Tab(label="⚙️ Configuração", tab_id="config")
     ], id="tabs", active_tab="dashboard"),
     
@@ -1150,6 +1152,8 @@ def render_tab_content(active_tab):
         return render_calendar()
     elif active_tab == "goals":
         return render_goals()
+    elif active_tab == "ai_chat":
+        return render_ai_chat()
     elif active_tab == "config":
         return render_config()
     return html.P("Selecione uma aba.")
@@ -4724,7 +4728,8 @@ def render_config():
                                 dbc.Input(id="garmin-password", type="password", value=credentials.get("password", ""), placeholder="••••••••")
                             ], md=6)
                         ]),
-                        dbc.Button("💾 Salvar Credenciais", id="save-credentials-btn", color="primary", className="mt-3")
+                        dbc.Button("💾 Salvar Credenciais", id="save-credentials-btn", color="primary", className="mt-3"),
+                        html.Div(id="credentials-status", className="mt-3")
                     ])
                 ], className="mb-4"),
                 
@@ -4790,6 +4795,100 @@ def render_config():
             ])
         ])
     ])
+
+def render_ai_chat():
+    """Renderiza a interface de chat com IA"""
+    try:
+        # Inicializar AI se possível
+        ai = FitnessAI()
+        
+        return dbc.Container([
+            dbc.Row([
+                dbc.Col([
+                    html.H2("🤖 Assistente de Fitness IA", className="mb-4"),
+                    html.P("Converse com nossa IA especializada em treinamento físico. Faça perguntas sobre suas métricas, treinos, progresso e receba insights personalizados!", className="text-muted mb-4"),
+                    
+                    # Área de chat
+                    dbc.Card([
+                        dbc.CardHeader("💬 Conversa com a IA"),
+                        dbc.CardBody([
+                            # Histórico de mensagens
+                            html.Div(id="chat-history", style={
+                                'height': '400px',
+                                'overflowY': 'auto',
+                                'border': '1px solid #dee2e6',
+                                'borderRadius': '8px',
+                                'padding': '15px',
+                                'marginBottom': '15px',
+                                'backgroundColor': '#f8f9fa'
+                            }, children=[
+                                html.Div("🤖 Olá! Sou seu assistente de fitness. Faça uma pergunta sobre seus treinos, métricas ou progresso!", 
+                                        style={'fontStyle': 'italic', 'color': '#6c757d', 'marginBottom': '10px'})
+                            ]),
+                            
+                            # Input de mensagem
+                            dbc.Row([
+                                dbc.Col([
+                                    dbc.Input(id="chat-input", type="text", 
+                                             placeholder="Digite sua pergunta sobre fitness...",
+                                             style={'borderRadius': '20px'})
+                                ], md=10),
+                                dbc.Col([
+                                    dbc.Button("📤 Enviar", id="send-chat-btn", color="primary", 
+                                             style={'borderRadius': '20px'})
+                                ], md=2)
+                            ])
+                        ])
+                    ]),
+                    
+                    # Sugestões de perguntas
+                    dbc.Card([
+                        dbc.CardHeader("💡 Sugestões de Perguntas"),
+                        dbc.CardBody([
+                            html.P("Clique em uma sugestão para começar:", className="mb-3"),
+                            dbc.Row([
+                                dbc.Col([
+                                    dbc.Button("Como está meu equilíbrio entre modalidades?", 
+                                             id="suggestion-1", color="outline-primary", size="sm", className="me-2 mb-2"),
+                                    dbc.Button("Preciso ajustar minha periodização?", 
+                                             id="suggestion-2", color="outline-primary", size="sm", className="me-2 mb-2"),
+                                    dbc.Button("Preparação para prova de triathlon", 
+                                             id="suggestion-3", color="outline-primary", size="sm", className="me-2 mb-2")
+                                ]),
+                                dbc.Col([
+                                    dbc.Button("Qual modalidade precisa de mais foco?", 
+                                             id="suggestion-4", color="outline-primary", size="sm", className="me-2 mb-2"),
+                                    dbc.Button("Otimizar treinamento de transição", 
+                                             id="suggestion-5", color="outline-primary", size="sm", className="me-2 mb-2"),
+                                    dbc.Button("Análise de distribuição de volume", 
+                                             id="suggestion-6", color="outline-primary", size="sm", className="me-2 mb-2")
+                                ])
+                            ])
+                        ])
+                    ], className="mt-4")
+                ])
+            ])
+        ])
+    except Exception as e:
+        return dbc.Container([
+            dbc.Row([
+                dbc.Col([
+                    html.H2("🤖 Assistente de Fitness IA", className="mb-4"),
+                    dbc.Alert([
+                        html.H4("⚠️ Configuração Necessária", className="alert-heading"),
+                        html.P("Para usar o assistente de IA, você precisa configurar sua chave da API Groq:"),
+                        html.Ol([
+                            html.Li("Acesse https://console.groq.com/"),
+                            html.Li("Crie uma conta gratuita"),
+                            html.Li("Gere uma chave API"),
+                            html.Li("Crie um arquivo .env na pasta do projeto"),
+                            html.Li("Adicione: GROQ_API_KEY=sua_chave_aqui")
+                        ]),
+                        html.P("Após configurar, reinicie o aplicativo.", className="mb-0")
+                    ], color="warning")
+                ])
+            ])
+        ])
 
 # Funções auxiliares
 def load_metrics():
@@ -5520,6 +5619,200 @@ def update_last_sync_badge(active_tab):
             return "🔄 Nenhuma sincronização ainda"
     except Exception as e:
         return "🔄 Status desconhecido"
+
+# Callbacks para o chat de IA
+@app.callback(
+    [Output("chat-history", "children"),
+     Output("chat-input", "value")],
+    [Input("send-chat-btn", "n_clicks"),
+     Input("suggestion-1", "n_clicks"),
+     Input("suggestion-2", "n_clicks"),
+     Input("suggestion-3", "n_clicks"),
+     Input("suggestion-4", "n_clicks"),
+     Input("suggestion-5", "n_clicks"),
+     Input("suggestion-6", "n_clicks")],
+    [State("chat-input", "value"),
+     State("chat-history", "children")],
+    prevent_initial_call=True
+)
+def handle_chat_message(send_clicks, s1, s2, s3, s4, s5, s6, input_value, current_history):
+    """Processa mensagens do chat de IA"""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return current_history, input_value
+    
+    # Determinar qual botão foi clicado
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    # Definir mensagem baseada no botão clicado
+    if triggered_id == "send-chat-btn" and input_value:
+        user_message = input_value
+    elif triggered_id == "suggestion-1":
+        user_message = "Como está meu equilíbrio entre as três modalidades?"
+    elif triggered_id == "suggestion-2":
+        user_message = "Preciso ajustar minha periodização de treinamento?"
+    elif triggered_id == "suggestion-3":
+        user_message = "Como está minha preparação para uma prova de triathlon?"
+    elif triggered_id == "suggestion-4":
+        user_message = "Qual modalidade precisa de mais foco?"
+    elif triggered_id == "suggestion-5":
+        user_message = "Como otimizar meu treinamento de transição?"
+    elif triggered_id == "suggestion-6":
+        user_message = "Análise da distribuição de volume por modalidade"
+    else:
+        return current_history, ""
+    
+    try:
+        # Inicializar AI
+        ai = FitnessAI()
+        
+        # Carregar dados
+        metrics = load_metrics()
+        workouts = load_workouts()
+        config = load_config()
+        
+        # Gerar resposta da IA
+        response = ai.answer_question(user_message, metrics, workouts, config)
+        
+        # Adicionar mensagens ao histórico
+        new_history = list(current_history) if current_history else []
+        
+        # Adicionar mensagem do usuário
+        new_history.append(
+            html.Div([
+                html.Strong("👤 Você: ", style={'color': '#007bff'}),
+                user_message
+            ], style={'marginBottom': '10px', 'padding': '8px', 'backgroundColor': '#e3f2fd', 'borderRadius': '8px'})
+        )
+        
+        # Adicionar resposta da IA
+        new_history.append(
+            html.Div([
+                html.Strong("🤖 IA: ", style={'color': '#28a745'}),
+                html.Div(response, style={'whiteSpace': 'pre-wrap', 'marginTop': '5px'})
+            ], style={'marginBottom': '15px', 'padding': '8px', 'backgroundColor': '#f8f9fa', 'borderRadius': '8px', 'borderLeft': '4px solid #28a745'})
+        )
+        
+        return new_history, ""
+        
+    except Exception as e:
+        # Em caso de erro, mostrar mensagem de erro
+        error_history = list(current_history) if current_history else []
+        error_history.append(
+            html.Div([
+                html.Strong("❌ Erro: ", style={'color': '#dc3545'}),
+                f"Não foi possível processar sua pergunta. Erro: {str(e)}"
+            ], style={'marginBottom': '10px', 'padding': '8px', 'backgroundColor': '#f8d7da', 'borderRadius': '8px'})
+        )
+        return error_history, input_value
+
+# Callbacks para configurações
+@app.callback(
+    Output("credentials-status", "children"),
+    Input("save-credentials-btn", "n_clicks"),
+    State("garmin-email", "value"),
+    State("garmin-password", "value"),
+    prevent_initial_call=True
+)
+def save_credentials_callback(n_clicks, email, password):
+    """Salva credenciais do Garmin"""
+    if n_clicks:
+        try:
+            if not email or not password:
+                return html.Div("❌ Preencha email e senha.", className="alert alert-warning mt-3")
+            
+            save_credentials(email, password)
+            return html.Div("✅ Credenciais salvas com sucesso!", className="alert alert-success mt-3")
+        except Exception as e:
+            return html.Div(f"❌ Erro ao salvar credenciais: {str(e)}", className="alert alert-danger mt-3")
+    return html.Div()
+
+@app.callback(
+    Output("config-status", "children"),
+    Input("save-config-btn", "n_clicks"),
+    State("config-age", "value"),
+    State("config-ftp", "value"),
+    State("config-hr-max", "value"),
+    State("config-hr-rest", "value"),
+    State("config-hr-threshold", "value"),
+    State("config-pace-threshold", "value"),
+    State("config-swim-pace-threshold", "value"),
+    prevent_initial_call=True
+)
+def save_config_callback(n_clicks, age, ftp, hr_max, hr_rest, hr_threshold, pace_threshold, swim_pace_threshold):
+    """Salva configurações de fitness"""
+    if n_clicks:
+        try:
+            config = {
+                "age": int(age) if age else 29,
+                "ftp": int(ftp) if ftp else 250,
+                "hr_max": int(hr_max) if hr_max else 191,
+                "hr_rest": int(hr_rest) if hr_rest else 50,
+                "hr_threshold": int(hr_threshold) if hr_threshold else 162,
+                "pace_threshold": pace_threshold or "4:22",
+                "swim_pace_threshold": swim_pace_threshold or "2:01",
+                "weekly_distance_goal": 50.0,
+                "weekly_tss_goal": 300,
+                "weekly_hours_goal": 7.0,
+                "weekly_activities_goal": 5,
+                "monthly_distance_goal": 200.0,
+                "monthly_tss_goal": 1200,
+                "monthly_hours_goal": 30.0,
+                "monthly_activities_goal": 20,
+                "target_ctl": 50,
+                "target_atl_max": 80,
+            }
+            
+            save_config(config)
+            return html.Div("✅ Configurações salvas com sucesso!", className="alert alert-success mt-3")
+        except Exception as e:
+            return html.Div(f"❌ Erro ao salvar configurações: {str(e)}", className="alert alert-danger mt-3")
+    return html.Div()
+
+@app.callback(
+    Output("update-status", "children"),
+    Input("update-data-btn", "n_clicks"),
+    Input("reset-data-btn", "n_clicks"),
+    prevent_initial_call=True
+)
+def handle_update_reset(update_clicks, reset_clicks):
+    """Atualiza dados do Garmin ou reinicia dados - detecta qual botão foi clicado"""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return html.Div()
+    
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    if triggered_id == "update-data-btn":
+        try:
+            credentials = load_credentials()
+            config = load_config()
+            
+            if not credentials['email'] or not credentials['password']:
+                return html.Div("❌ Configure suas credenciais do Garmin primeiro.", className="alert alert-warning mt-3")
+            
+            success, message = fetch_garmin_data(credentials['email'], credentials['password'], config)
+            
+            if success:
+                return html.Div(message, className="alert alert-success mt-3")
+            else:
+                return html.Div(message, className="alert alert-danger mt-3")
+                
+        except Exception as e:
+            return html.Div(f"❌ Erro inesperado: {str(e)}", className="alert alert-danger mt-3")
+    
+    elif triggered_id == "reset-data-btn":
+        try:
+            if METRICS_FILE.exists():
+                METRICS_FILE.unlink()
+            if WORKOUTS_FILE.exists():
+                WORKOUTS_FILE.unlink()
+            
+            return html.Div("✅ Dados reiniciados com sucesso!", className="alert alert-success mt-3")
+        except Exception as e:
+            return html.Div(f"❌ Erro ao reiniciar dados: {str(e)}", className="alert alert-danger mt-3")
+    
+    return html.Div()
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8050)
