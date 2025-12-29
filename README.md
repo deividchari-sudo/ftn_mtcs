@@ -247,8 +247,6 @@ git push heroku main
 
 **Solução**: Migre para Railway, Render ou Heroku para funcionalidade completa.
 
-📖 **Mais detalhes**: Veja [PYTHONANYWHERE_LIMITATIONS.md](PYTHONANYWHERE_LIMITATIONS.md)
-
 ## 🔒 Segurança e Privacidade
 
 - **Armazenamento Local**: Todas as credenciais e dados são armazenados apenas no seu dispositivo
