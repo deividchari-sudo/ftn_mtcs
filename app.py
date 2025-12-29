@@ -4707,7 +4707,7 @@ def render_goals():
 def render_config():
     config = load_config()
     credentials = load_credentials()
-    tokens = load_garmin_tokens()
+    tokens_valid = validate_garmin_tokens_locally()
     
     return dbc.Container([
         dbc.Row([
@@ -4722,10 +4722,10 @@ def render_config():
                         
                         html.Div([
                             dbc.Alert(
-                                "✅ Tokens do Garmin disponíveis! Você pode fazer login sem inserir email/senha.",
+                                "✅ Tokens do Garmin válidos! Você pode fazer login sem inserir email/senha.",
                                 color="success",
                                 className="mb-3"
-                            ) if tokens else None
+                            ) if tokens_valid else None
                         ], id="tokens-status"),
                         
                         dbc.Row([
@@ -4987,6 +4987,48 @@ def load_garmin_tokens():
     
     return None
 
+def validate_garmin_tokens_locally():
+    """Valida tokens localmente sem conectar ao servidor (útil para PythonAnywhere)"""
+    try:
+        token_dir = Path("garmin_tokens.json")
+        if not token_dir.exists() or not token_dir.is_dir():
+            return False
+            
+        oauth1_path = token_dir / "oauth1_token.json"
+        oauth2_path = token_dir / "oauth2_token.json"
+        
+        if not oauth1_path.exists() or not oauth2_path.exists():
+            return False
+            
+        # Carregar e validar estrutura básica dos tokens
+        with open(oauth1_path, "r") as f:
+            oauth1 = json.load(f)
+            
+        with open(oauth2_path, "r") as f:
+            oauth2 = json.load(f)
+            
+        # Verificar se OAuth1 tem campos obrigatórios
+        if not all(key in oauth1 for key in ["oauth_token", "oauth_token_secret"]):
+            return False
+            
+        # Verificar se OAuth2 tem campos obrigatórios e não expirou
+        required_oauth2 = ["access_token", "token_type", "expires_in", "refresh_token"]
+        if not all(key in oauth2 for key in required_oauth2):
+            return False
+            
+        # Verificar expiração (com margem de segurança de 1 hora)
+        from datetime import datetime, timedelta
+        expires_at = datetime.fromisoformat(oauth2.get("expires_at", "2000-01-01T00:00:00"))
+        if datetime.now() + timedelta(hours=1) > expires_at:
+            print("⚠️ Tokens OAuth2 expirados ou próximos da expiração")
+            return False
+            
+        return True
+        
+    except Exception as e:
+        print(f"Erro ao validar tokens localmente: {e}")
+        return False
+
 def save_garmin_tokens(garmin_client):
     """Salva tokens do Garmin após autenticação bem-sucedida"""
     try:
@@ -5206,8 +5248,8 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
         
         # Tentar login com tokens se disponível
         if use_tokens:
-            token_dir = Path("garmin_tokens.json")
-            if token_dir.exists() and token_dir.is_dir():
+            # Primeiro validar tokens localmente (sem conectar ao servidor)
+            if validate_garmin_tokens_locally():
                 try:
                     client = Garmin()
                     client.garth.load(str(token_dir))
@@ -5215,6 +5257,8 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
                 except Exception as e:
                     print(f"⚠️ Login com tokens falhou: {e}")
                     client = None
+            else:
+                print("⚠️ Tokens não encontrados ou inválidos localmente")
         
         # Se falhar com tokens ou não disponível, tentar com email/password
         if client is None:
