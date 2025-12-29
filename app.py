@@ -37,6 +37,8 @@ WORKOUTS_FILE = DATA_DIR / "workouts_42_dias.json"
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUX])
 app.title = "Fitness Metrics Dashboard"
+# Expor WSGI server para provedores como Render/Gunicorn
+server = app.server
 
 # CSS customizado para aparência moderna
 custom_css = """
@@ -5234,31 +5236,23 @@ def calculate_goals_progress(activities, config):
 
 def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
     """Busca dados do Garmin Connect com lógica inteligente de atualização
-
+    
     Parâmetros:
     - email: email do Garmin (opcional se usar tokens)
     - password: senha do Garmin (opcional se usar tokens)
     - config: configurações de fitness
     - use_tokens: tentar usar tokens salvos primeiro (padrão: True)
     """
-    # Verificar se estamos no PythonAnywhere (ambiente com restrições de rede)
-    import os
-    is_pythonanywhere = 'PYTHONANYWHERE_DOMAIN' in os.environ
-
-    if is_pythonanywhere:
-        return False, "🚫 PythonAnywhere bloqueia conexões externas. Use dados locais ou migre para outro provedor (Heroku, Railway, etc.)"
-
     try:
         from garminconnect import Garmin
-
+        
         client = None
-
+        
         # Tentar login com tokens se disponível
         if use_tokens:
             # Primeiro validar tokens localmente (sem conectar ao servidor)
             if validate_garmin_tokens_locally():
                 try:
-                    token_dir = Path("garmin_tokens.json")
                     client = Garmin()
                     client.garth.load(str(token_dir))
                     print("✅ Login com tokens bem-sucedido")
@@ -5267,16 +5261,16 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
                     client = None
             else:
                 print("⚠️ Tokens não encontrados ou inválidos localmente")
-
+        
         # Se falhar com tokens ou não disponível, tentar com email/password
         if client is None:
             if not email or not password:
                 return False, "❌ Email e senha necessários ou tokens não disponíveis"
-
+            
             client = Garmin(email, password)
             client.login()
             print("✅ Login com email/senha bem-sucedido")
-
+            
             # Salvar os novos tokens após login bem-sucedido
             save_garmin_tokens(client)
 
