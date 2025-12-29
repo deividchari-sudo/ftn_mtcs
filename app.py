@@ -4707,6 +4707,7 @@ def render_goals():
 def render_config():
     config = load_config()
     credentials = load_credentials()
+    tokens = load_garmin_tokens()
     
     return dbc.Container([
         dbc.Row([
@@ -4718,6 +4719,15 @@ def render_config():
                     dbc.CardHeader("🔐 Credenciais Garmin Connect"),
                     dbc.CardBody([
                         html.P("Seus dados de login são armazenados de forma segura apenas neste dispositivo.", className="text-muted mb-3"),
+                        
+                        html.Div([
+                            dbc.Alert(
+                                "✅ Tokens do Garmin disponíveis! Você pode fazer login sem inserir email/senha.",
+                                color="success",
+                                className="mb-3"
+                            ) if tokens else None
+                        ], id="tokens-status"),
+                        
                         dbc.Row([
                             dbc.Col([
                                 dbc.Label("Email"),
@@ -4728,7 +4738,14 @@ def render_config():
                                 dbc.Input(id="garmin-password", type="password", value=credentials.get("password", ""), placeholder="••••••••")
                             ], md=6)
                         ]),
-                        dbc.Button("💾 Salvar Credenciais", id="save-credentials-btn", color="primary", className="mt-3"),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Button("💾 Salvar Credenciais", id="save-credentials-btn", color="primary", className="mt-3")
+                            ], md=6),
+                            dbc.Col([
+                                dbc.Button("🔄 Atualizar Tokens", id="refresh-tokens-btn", color="info", className="mt-3")
+                            ], md=6)
+                        ]),
                         html.Div(id="credentials-status", className="mt-3")
                     ])
                 ], className="mb-4"),
@@ -4944,6 +4961,45 @@ def save_credentials(email, password):
     except:
         pass
 
+def load_garmin_tokens():
+    """Carrega tokens do Garmin do arquivo garmin_tokens.json"""
+    token_dir = Path("garmin_tokens.json")
+    try:
+        if token_dir.exists() and token_dir.is_dir():
+            oauth1_path = token_dir / "oauth1_token.json"
+            oauth2_path = token_dir / "oauth2_token.json"
+            
+            oauth1_token = None
+            oauth2_token = None
+            
+            if oauth1_path.exists():
+                with open(oauth1_path, "r") as f:
+                    oauth1_token = json.load(f)
+            
+            if oauth2_path.exists():
+                with open(oauth2_path, "r") as f:
+                    oauth2_token = json.load(f)
+            
+            if oauth1_token and oauth2_token:
+                return {"oauth1": oauth1_token, "oauth2": oauth2_token}
+    except Exception as e:
+        print(f"Erro ao carregar tokens: {e}")
+    
+    return None
+
+def save_garmin_tokens(garmin_client):
+    """Salva tokens do Garmin após autenticação bem-sucedida"""
+    try:
+        token_dir = Path("garmin_tokens.json")
+        token_dir.mkdir(exist_ok=True)
+        
+        # Dumpar tokens do cliente garmin
+        garmin_client.garth.dump(str(token_dir))
+        return True
+    except Exception as e:
+        print(f"Erro ao salvar tokens: {e}")
+        return False
+
 def load_metrics():
     """Carrega métricas de fitness do armazenamento local"""
     if METRICS_FILE.exists():
@@ -5134,12 +5190,43 @@ def calculate_goals_progress(activities, config):
         'current_atl': current_atl
     }
 
-def fetch_garmin_data(email, password, config):
-    """Busca dados do Garmin Connect com lógica inteligente de atualização"""
+def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
+    """Busca dados do Garmin Connect com lógica inteligente de atualização
+    
+    Parâmetros:
+    - email: email do Garmin (opcional se usar tokens)
+    - password: senha do Garmin (opcional se usar tokens)
+    - config: configurações de fitness
+    - use_tokens: tentar usar tokens salvos primeiro (padrão: True)
+    """
     try:
         from garminconnect import Garmin
-        client = Garmin(email, password)
-        client.login()
+        
+        client = None
+        
+        # Tentar login com tokens se disponível
+        if use_tokens:
+            token_dir = Path("garmin_tokens.json")
+            if token_dir.exists() and token_dir.is_dir():
+                try:
+                    client = Garmin()
+                    client.garth.load(str(token_dir))
+                    print("✅ Login com tokens bem-sucedido")
+                except Exception as e:
+                    print(f"⚠️ Login com tokens falhou: {e}")
+                    client = None
+        
+        # Se falhar com tokens ou não disponível, tentar com email/password
+        if client is None:
+            if not email or not password:
+                return False, "❌ Email e senha necessários ou tokens não disponíveis"
+            
+            client = Garmin(email, password)
+            client.login()
+            print("✅ Login com email/senha bem-sucedido")
+            
+            # Salvar os novos tokens após login bem-sucedido
+            save_garmin_tokens(client)
 
         end_date = datetime.now().date()
 
@@ -5728,6 +5815,33 @@ def save_credentials_callback(n_clicks, email, password):
     return html.Div()
 
 @app.callback(
+    Output("credentials-status", "children", allow_duplicate=True),
+    Input("refresh-tokens-btn", "n_clicks"),
+    prevent_initial_call=True
+)
+def refresh_tokens_callback(n_clicks):
+    """Atualiza tokens do Garmin usando credenciais salvas"""
+    if n_clicks:
+        try:
+            credentials = load_credentials()
+            email = credentials.get("email")
+            password = credentials.get("password")
+            
+            if not email or not password:
+                return html.Div("❌ Configure email e senha primeiro.", className="alert alert-warning mt-3")
+            
+            from garminconnect import Garmin
+            client = Garmin(email, password)
+            client.login()
+            save_garmin_tokens(client)
+            
+            return html.Div("✅ Tokens atualizados com sucesso!", className="alert alert-success mt-3")
+        except Exception as e:
+            return html.Div(f"❌ Erro ao atualizar tokens: {str(e)}", className="alert alert-danger mt-3")
+    return html.Div()
+
+
+@app.callback(
     Output("config-status", "children"),
     Input("save-config-btn", "n_clicks"),
     State("config-age", "value"),
@@ -5788,10 +5902,13 @@ def handle_update_reset(update_clicks, reset_clicks):
             credentials = load_credentials()
             config = load_config()
             
-            if not credentials['email'] or not credentials['password']:
-                return html.Div("❌ Configure suas credenciais do Garmin primeiro.", className="alert alert-warning mt-3")
-            
-            success, message = fetch_garmin_data(credentials['email'], credentials['password'], config)
+            # Tentar com tokens primeiro, depois com email/senha se disponível
+            success, message = fetch_garmin_data(
+                email=credentials.get('email'),
+                password=credentials.get('password'),
+                config=config,
+                use_tokens=True
+            )
             
             if success:
                 return html.Div(message, className="alert alert-success mt-3")

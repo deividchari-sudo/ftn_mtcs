@@ -124,6 +124,56 @@ O assistente de IA integrado é um **treinador especialista em triathlon**, com 
 
 ## 🔧 Configuração
 
+### Autenticação Garmin Connect
+
+O aplicativo oferece duas formas de autenticação com o Garmin Connect:
+
+#### **Opção 1: Login com Email e Senha (Recomendado - Mais Seguro)**
+
+1. Acesse a página "⚙️ Configuração"
+2. Insira seu email e senha do Garmin Connect
+3. Clique em "💾 Salvar Credenciais"
+4. **Ao salvar, os tokens serão automaticamente gerados e armazenados**
+5. Na próxima sincronização, o app usará os tokens (não precisa mais da senha)
+
+#### **Opção 2: Login com Tokens Salvos (Mais Rápido)**
+
+Se você já tem um arquivo `garmin_tokens.json`:
+
+1. **Coloque o arquivo na raiz do projeto**:
+   ```
+   seu_projeto/
+   ├── app.py
+   ├── garmin_tokens.json/
+   │   ├── oauth1_token.json
+   │   └── oauth2_token.json
+   └── ...
+   ```
+
+2. Na sincronização de dados, o app usará os tokens automaticamente
+3. **Você não precisa configurar email e senha**
+
+#### **Gerar Novos Tokens via Linha de Comando**
+
+Se os tokens expirarem, você pode regenerá-los:
+
+```bash
+# Configure as variáveis de ambiente
+export GARMIN_EMAIL=seu@email.com
+export GARMIN_PASSWORD=sua_senha
+
+# Execute o script
+python garmin.py
+```
+
+Ou clique em "🔄 Atualizar Tokens" na página de configuração do app.
+
+### Prioridade de Autenticação
+
+1. ✅ Tenta usar tokens salvos em `garmin_tokens.json` (mais rápido)
+2. ↪️ Se falhar, tenta usar email/senha armazenados
+3. ❌ Se ambos falharem, exibe erro
+
 ### Credenciais Garmin Connect
 
 1. Acesse a página "⚙️ Configuração"

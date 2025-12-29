@@ -6,9 +6,23 @@ __pycache__/
 # C extensions
 *.so
 
+# ============================================================================
+# 🔒 SEGURANÇA - Não commitir arquivos sensíveis!
+# ============================================================================
+
+# Tokens e credenciais Garmin
+garmin_tokens.json/
+garmin_credentials.json
+.fitness_metrics/
+
+# Variáveis de ambiente e secrets
+.env
+.env.local
+.env.*.local
+.env.prod
+
 # Arquivos locais e configurações de usuário
 user_config.json
-.env
 *.log
 fitness_metrics.log
 
@@ -143,3 +157,5 @@ dmypy.json
 
 # Garmin tokens
 .garminconnect
+garmin_tokens.json
+garmin.py
