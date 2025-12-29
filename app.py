@@ -5258,6 +5258,7 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
             # Primeiro validar tokens localmente (sem conectar ao servidor)
             if validate_garmin_tokens_locally():
                 try:
+                    token_dir = Path("garmin_tokens.json")
                     client = Garmin()
                     client.garth.load(str(token_dir))
                     print("✅ Login com tokens bem-sucedido")
