@@ -14,6 +14,7 @@ import calendar
 
 from utils import *
 from ai_chat import FitnessAI
+from details_page import render_details
 
 # Função auxiliar para converter horas decimais em hh:mm:ss
 def format_hours_to_hms(hours):
@@ -1134,6 +1135,7 @@ app.layout = html.Div(id='app-container', children=[
         dbc.Tab(label="📅 Calendário", tab_id="calendar"),
         dbc.Tab(label="🎯 Metas", tab_id="goals"),
         dbc.Tab(label="🤖 AI Chat", tab_id="ai_chat"),
+        dbc.Tab(label="📋 Mais Detalhes", tab_id="details"),
         dbc.Tab(label="⚙️ Configuração", tab_id="config")
     ], id="tabs", active_tab="dashboard"),
     
@@ -1156,6 +1158,8 @@ def render_tab_content(active_tab):
         return render_goals()
     elif active_tab == "ai_chat":
         return render_ai_chat()
+    elif active_tab == "details":
+        return render_details()
     elif active_tab == "config":
         return render_config()
     return html.P("Selecione uma aba.")
@@ -2100,576 +2104,12 @@ def render_dashboard():
             ], md=4)
         ], className="mb-5"),
         
-        # ============ ALERTAS INTELIGENTES ============
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("🚨 Alertas Inteligentes", className="mb-3 text-danger", style={'fontWeight': '700'}),
-                    html.P("Recomendações personalizadas baseadas nas suas métricas", className="text-muted mb-4", style={'fontSize': '0.95rem'})
-                ], className="text-center")
-            ])
-        ]),
-        
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    *[dbc.Alert([
-                        dbc.Row([
-                            dbc.Col([
-                                html.Div(alert['icon'], style={'fontSize': '2.5rem'}),
-                            ], width=2, className="text-center"),
-                            dbc.Col([
-                                html.H5(alert['title'], className="alert-heading mb-2", style={'fontWeight': '700'}),
-                                html.P(alert['message'], className="mb-1", style={'fontSize': '0.95rem'}),
-                                html.Hr(className="my-2"),
-                                html.P([
-                                    html.Strong("💡 Ação: "),
-                                    alert['action']
-                                ], className="mb-0 small", style={'fontStyle': 'italic'})
-                            ], width=10)
-                        ])
-                    ], color=alert['color'], className="shadow-sm", style={'borderRadius': '12px', 'borderLeft': f"5px solid var(--bs-{alert['color']})"}) 
-                    for alert in calculate_smart_alerts(metrics)],
-                    dbc.Alert([
-                        dbc.Row([
-                            dbc.Col([
-                                html.Div("ℹ️", style={'fontSize': '2.5rem'}),
-                            ], width=2, className="text-center"),
-                            dbc.Col([
-                                html.H5("Nenhum Alerta", className="alert-heading mb-1"),
-                                html.P("Suas métricas estão dentro dos parâmetros normais. Continue assim!", className="mb-0")
-                            ], width=10)
-                        ])
-                    ], color="light", className="shadow-sm", style={'borderRadius': '12px'}) if not calculate_smart_alerts(metrics) else None
-                ])
-            ])
-        ], className="mb-5"),
-        
-        # ============ COMPARAÇÃO SEMANA ATUAL VS ANTERIOR ============
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("📊 Comparação Semanal", className="mb-3 text-info", style={'fontWeight': '700'}),
-                    html.P("Como suas métricas evoluíram na última semana", className="text-muted mb-4", style={'fontSize': '0.95rem'})
-                ], className="text-center")
-            ])
-        ]),
-        
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    *([
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Card([
-                                    dbc.CardBody([
-                                        html.Div([
-                                            html.H6("💪 CTL (Forma)", className="text-primary mb-3", style={'fontWeight': '600'}),
-                                            dbc.Row([
-                                                dbc.Col([
-                                                    html.Div("Semana Anterior", className="text-muted small mb-1"),
-                                                    html.H4(f"{comparison['ctl']['previous']:.2f}", className="text-secondary", style={'fontWeight': '700'})
-                                                ], width=6),
-                                                dbc.Col([
-                                                    html.Div("Semana Atual", className="text-muted small mb-1"),
-                                                    html.H4(f"{comparison['ctl']['current']:.2f}", className="text-primary", style={'fontWeight': '700'})
-                                                ], width=6)
-                                            ]),
-                                            html.Hr(className="my-2"),
-                                            dbc.Badge([
-                                                "↗️ " if comparison['ctl']['change'] > 0 else "↘️ " if comparison['ctl']['change'] < 0 else "➡️ ",
-                                                f"{comparison['ctl']['change']:+.2f} pts ({comparison['ctl']['change_pct']:+.1f}%)"
-                                            ], color="success" if comparison['ctl']['change'] > 0 else "danger" if comparison['ctl']['change'] < 0 else "secondary", 
-                                            className="w-100 p-2", style={'fontSize': '0.9rem'})
-                                        ])
-                                    ])
-                                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px'})
-                            ], md=4),
-                            dbc.Col([
-                                dbc.Card([
-                                    dbc.CardBody([
-                                        html.Div([
-                                            html.H6("😴 ATL (Fadiga)", className="text-danger mb-3", style={'fontWeight': '600'}),
-                                            dbc.Row([
-                                                dbc.Col([
-                                                    html.Div("Semana Anterior", className="text-muted small mb-1"),
-                                                    html.H4(f"{comparison['atl']['previous']:.2f}", className="text-secondary", style={'fontWeight': '700'})
-                                                ], width=6),
-                                                dbc.Col([
-                                                    html.Div("Semana Atual", className="text-muted small mb-1"),
-                                                    html.H4(f"{comparison['atl']['current']:.2f}", className="text-danger", style={'fontWeight': '700'})
-                                                ], width=6)
-                                            ]),
-                                            html.Hr(className="my-2"),
-                                            dbc.Badge([
-                                                "↗️ " if comparison['atl']['change'] > 0 else "↘️ " if comparison['atl']['change'] < 0 else "➡️ ",
-                                                f"{comparison['atl']['change']:+.2f} pts ({comparison['atl']['change_pct']:+.1f}%)"
-                                            ], color="warning" if comparison['atl']['change'] > 0 else "success" if comparison['atl']['change'] < 0 else "secondary",
-                                            className="w-100 p-2", style={'fontSize': '0.9rem'})
-                                        ])
-                                    ])
-                                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px'})
-                            ], md=4),
-                            dbc.Col([
-                                dbc.Card([
-                                    dbc.CardBody([
-                                        html.Div([
-                                            html.H6("⚖️ TSB (Equilíbrio)", className="text-success mb-3", style={'fontWeight': '600'}),
-                                            dbc.Row([
-                                                dbc.Col([
-                                                    html.Div("Semana Anterior", className="text-muted small mb-1"),
-                                                    html.H4(f"{comparison['tsb']['previous']:.2f}", className="text-secondary", style={'fontWeight': '700'})
-                                                ], width=6),
-                                                dbc.Col([
-                                                    html.Div("Semana Atual", className="text-muted small mb-1"),
-                                                    html.H4(f"{comparison['tsb']['current']:.2f}", className="text-success", style={'fontWeight': '700'})
-                                                ], width=6)
-                                            ]),
-                                            html.Hr(className="my-2"),
-                                            dbc.Badge([
-                                                "↗️ " if comparison['tsb']['change'] > 0 else "↘️ " if comparison['tsb']['change'] < 0 else "➡️ ",
-                                                f"{comparison['tsb']['change']:+.2f} pts ({comparison['tsb']['change_pct']:+.1f}%)"
-                                            ], color="success" if comparison['tsb']['change'] > 0 else "warning" if comparison['tsb']['change'] < 0 else "secondary",
-                                            className="w-100 p-2", style={'fontSize': '0.9rem'})
-                                        ])
-                                    ])
-                                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px'})
-                            ], md=4)
-                        ], className="mb-4")
-                    ] if (comparison := calculate_period_comparison(metrics)) else [
-                        dbc.Alert([
-                            html.H5("📊 Dados Insuficientes", className="alert-heading mb-2"),
-                            html.P("Precisamos de pelo menos 14 dias de dados para comparar períodos.", className="mb-0")
-                        ], color="info", className="shadow-sm", style={'borderRadius': '12px'})
-                    ])
-                ])
-            ])
-        ], className="mb-5"),
-        
-        # ============ RECORDES PESSOAIS ============
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("🏆 Recordes Pessoais", className="mb-3 text-warning", style={'fontWeight': '700'}),
-                    html.P("Seus melhores resultados e conquistas", className="text-muted mb-4", style={'fontSize': '0.95rem'})
-                ], className="text-center")
-            ])
-        ]),
-        
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    *([
-                        dbc.Row([
-                            *[dbc.Col([
-                                dbc.Card([
-                                    dbc.CardBody([
-                                        html.Div([
-                                            html.Div(record['icon'], style={'fontSize': '2.5rem'}, className="mb-2"),
-                                            html.H6(record['label'], className="text-muted mb-2", style={'fontSize': '0.8rem', 'fontWeight': '600'}),
-                                            html.H3([
-                                                f"{record['value']:.2f}" if record['unit'] in ['pts', 'h'] else f"{record['value']:.1f}",
-                                                html.Small(f" {record['unit']}", className="text-muted", style={'fontSize': '0.6em'})
-                                            ], className="mb-2", style={'fontWeight': '800'}),
-                                            html.Div([
-                                                html.Small(f"📅 {record['date']}", className="text-muted d-block", style={'fontSize': '0.75rem'}),
-                                                html.Small(record.get('activity', ''), className="text-primary d-block mt-1", style={'fontSize': '0.7rem', 'fontWeight': '500'}) if 'activity' in record else None
-                                            ])
-                                        ], className="text-center")
-                                    ])
-                                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'background': 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)', 'borderTop': '4px solid #ffc107'})
-                            ], md=2) for record in calculate_personal_records(metrics, workouts).values()]
-                        ], className="mb-4") if calculate_personal_records(metrics, workouts) else None
-                    ] if workouts else [
-                        dbc.Alert([
-                            html.H5("🏆 Sem Recordes Ainda", className="alert-heading mb-2"),
-                            html.P("Continue treinando para estabelecer seus recordes pessoais!", className="mb-0")
-                        ], color="light", className="shadow-sm", style={'borderRadius': '12px'})
-                    ])
-                ])
-            ])
-        ], className="mb-5"),
-        
-        # Separador visual
-        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
-        
-        # ============ OBJETIVOS: PARA ONDE VOCÊ VAI ============
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H1("🎯 Objetivos", className="text-success mb-2", style={'fontWeight': '700'}),
-                    html.P("Seus objetivos de treinamento e progresso atual", className="text-muted mb-4", style={'fontSize': '1.1rem'})
-                ], className="text-center py-3")
-            ])
-        ], className="bg-light rounded-3 mb-4"),
-        
-        # Carregar dados para calcular progresso
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("📅 Progresso Semanal", className="mb-2 text-primary", style={'fontWeight': '700'}),
-                    html.Div(style={'width': '60px', 'height': '4px', 'background': 'linear-gradient(90deg, #667eea, #764ba2)', 'margin': '0 auto 1rem', 'borderRadius': '2px'})
-                ], className="text-center"),
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.Div([
-                                    html.Div("🏃", className="mb-2", style={'fontSize': '2rem'}),
-                                    html.H6("Distância", className="card-title mb-2", style={'fontWeight': '600'}),
-                                    dbc.Progress(value=min(100, (goals_progress['weekly']['distance'] / config.get('weekly_distance_goal', 50.0) * 100) if config.get('weekly_distance_goal', 50.0) > 0 else 0), className="mt-2 mb-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['weekly']['distance'] >= config.get('weekly_distance_goal', 50.0) else "primary", animated=True, striped=True),
-                                    html.Small(f"{goals_progress['weekly']['distance']:.1f}km / {config.get('weekly_distance_goal', 50.0):.1f}km ({min(100, goals_progress['weekly']['distance'] / config.get('weekly_distance_goal', 50.0) * 100 if config.get('weekly_distance_goal', 50.0) > 0 else 0):.0f}%)", className="text-muted")
-                                ], className="text-center")
-                            ])
-                        ], className="mb-3 shadow-sm border-0", style={'borderRadius': '12px'})
-                    ], md=3),
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.Div([
-                                    html.Div("🎯", className="mb-2", style={'fontSize': '2rem'}),
-                                    html.H6("TSS", className="card-title mb-2", style={'fontWeight': '600'}),
-                                    dbc.Progress(value=min(100, (goals_progress['weekly']['tss'] / config.get('weekly_tss_goal', 300) * 100) if config.get('weekly_tss_goal', 300) > 0 else 0), className="mt-2 mb-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['weekly']['tss'] >= config.get('weekly_tss_goal', 300) else "primary", animated=True, striped=True),
-                                    html.Small(f"{goals_progress['weekly']['tss']:.0f} / {config.get('weekly_tss_goal', 300)} ({min(100, goals_progress['weekly']['tss'] / config.get('weekly_tss_goal', 300) * 100 if config.get('weekly_tss_goal', 300) > 0 else 0):.0f}%)", className="text-muted")
-                                ], className="text-center")
-                            ])
-                        ], className="mb-3 shadow-sm border-0", style={'borderRadius': '12px'})
-                    ], md=3),
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.Div([
-                                    html.Div("⏱️", className="mb-2", style={'fontSize': '2rem'}),
-                                    html.H6("Horas", className="card-title mb-2", style={'fontWeight': '600'}),
-                                    dbc.Progress(value=min(100, (goals_progress['weekly']['hours'] / config.get('weekly_hours_goal', 10.0) * 100) if config.get('weekly_hours_goal', 10.0) > 0 else 0), className="mt-2 mb-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['weekly']['hours'] >= config.get('weekly_hours_goal', 10.0) else "primary", animated=True, striped=True),
-                                    html.Small(f"{format_hours_to_hms(goals_progress['weekly']['hours'])} / {format_hours_to_hms(config.get('weekly_hours_goal', 10.0))} ({min(100, goals_progress['weekly']['hours'] / config.get('weekly_hours_goal', 10.0) * 100 if config.get('weekly_hours_goal', 10.0) > 0 else 0):.0f}%)", className="text-muted")
-                                ], className="text-center")
-                            ])
-                        ], className="mb-3 shadow-sm border-0", style={'borderRadius': '12px'})
-                    ], md=3),
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.Div([
-                                    html.Div("📊", className="mb-2", style={'fontSize': '2rem'}),
-                                    html.H6("Atividades", className="card-title mb-2", style={'fontWeight': '600'}),
-                                    dbc.Progress(value=min(100, (goals_progress['weekly']['activities'] / config.get('weekly_activities_goal', 5) * 100) if config.get('weekly_activities_goal', 5) > 0 else 0), className="mt-2 mb-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['weekly']['activities'] >= config.get('weekly_activities_goal', 5) else "primary", animated=True, striped=True),
-                                    html.Small(f"{goals_progress['weekly']['activities']} / {config.get('weekly_activities_goal', 5)} ({min(100, goals_progress['weekly']['activities'] / config.get('weekly_activities_goal', 5) * 100 if config.get('weekly_activities_goal', 5) > 0 else 0):.0f}%)", className="text-muted")
-                                ], className="text-center")
-                            ])
-                        ], className="mb-3 shadow-sm border-0", style={'borderRadius': '12px'})
-                    ], md=3)
-                ])
-            ])
-        ], className="mb-4"),
-        
-        # Progresso mensal
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("📊 Progresso Mensal", className="mb-2 text-success", style={'fontWeight': '700'}),
-                    html.Div(style={'width': '60px', 'height': '4px', 'background': 'linear-gradient(90deg, #11998e, #38ef7d)', 'margin': '0 auto 1rem', 'borderRadius': '2px'})
-                ], className="text-center"),
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.H6("🏃 Distância", className="card-title"),
-                                html.Div([
-                                    html.Div("Progresso mensal de distância", className="text-muted small"),
-                                    dbc.Progress(value=min(100, (goals_progress['monthly']['distance'] / config.get('monthly_distance_goal', 200.0) * 100) if config.get('monthly_distance_goal', 200.0) > 0 else 0), className="mt-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['monthly']['distance'] >= config.get('monthly_distance_goal', 200.0) else "primary", animated=True, striped=True),
-                                    html.Small(f"{goals_progress['monthly']['distance']:.1f}km / {config.get('monthly_distance_goal', 200.0):.0f}km ({min(100, goals_progress['monthly']['distance'] / config.get('monthly_distance_goal', 200.0) * 100 if config.get('monthly_distance_goal', 200.0) > 0 else 0):.0f}%)", className="text-muted")
-                                ])
-                            ])
-                        ], className="mb-3")
-                    ], md=3),
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.H6("🎯 TSS", className="card-title"),
-                                html.Div([
-                                    html.Div("Training Stress Score mensal", className="text-muted small"),
-                                    dbc.Progress(value=min(100, (goals_progress['monthly']['tss'] / config.get('monthly_tss_goal', 1200) * 100) if config.get('monthly_tss_goal', 1200) > 0 else 0), className="mt-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['monthly']['tss'] >= config.get('monthly_tss_goal', 1200) else "primary", animated=True, striped=True),
-                                    html.Small(f"{goals_progress['monthly']['tss']:.0f} / {config.get('monthly_tss_goal', 1200)} ({min(100, goals_progress['monthly']['tss'] / config.get('monthly_tss_goal', 1200) * 100 if config.get('monthly_tss_goal', 1200) > 0 else 0):.0f}%)", className="text-muted")
-                                ])
-                            ])
-                        ], className="mb-3")
-                    ], md=3),
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.H6("⏱️ Horas", className="card-title"),
-                                html.Div([
-                                    html.Div("Horas de treinamento mensal", className="text-muted small"),
-                                    dbc.Progress(value=min(100, (goals_progress['monthly']['hours'] / config.get('monthly_hours_goal', 40.0) * 100) if config.get('monthly_hours_goal', 40.0) > 0 else 0), className="mt-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['monthly']['hours'] >= config.get('monthly_hours_goal', 40.0) else "primary", animated=True, striped=True),
-                                    html.Small(f"{format_hours_to_hms(goals_progress['monthly']['hours'])} / {format_hours_to_hms(config.get('monthly_hours_goal', 40.0))} ({min(100, goals_progress['monthly']['hours'] / config.get('monthly_hours_goal', 40.0) * 100 if config.get('monthly_hours_goal', 40.0) > 0 else 0):.0f}%)", className="text-muted")
-                                ])
-                            ])
-                        ], className="mb-3")
-                    ], md=3),
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.H6("📊 Atividades", className="card-title"),
-                                html.Div([
-                                    html.Div("Número de treinos mensal", className="text-muted small"),
-                                    dbc.Progress(value=min(100, (goals_progress['monthly']['activities'] / config.get('monthly_activities_goal', 20) * 100) if config.get('monthly_activities_goal', 20) > 0 else 0), className="mt-2 progress-animated", style={'height': '12px'}, color="success" if goals_progress['monthly']['activities'] >= config.get('monthly_activities_goal', 20) else "primary", animated=True, striped=True),
-                                    html.Small(f"{goals_progress['monthly']['activities']} / {config.get('monthly_activities_goal', 20)} ({min(100, goals_progress['monthly']['activities'] / config.get('monthly_activities_goal', 20) * 100 if config.get('monthly_activities_goal', 20) > 0 else 0):.0f}%)", className="text-muted")
-                                ])
-                            ])
-                        ], className="mb-3")
-                    ], md=3)
-                ])
-            ])
-        ]),
-        
-        # Metas de performance
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("🏆 Metas de Performance", className="mb-2 text-warning", style={'fontWeight': '700'}),
-                    html.Div(style={'width': '60px', 'height': '4px', 'background': 'linear-gradient(90deg, #f093fb, #f5576c)', 'margin': '0 auto 1rem', 'borderRadius': '2px'})
-                ], className="text-center"),
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.H6("✅ CTL vs Alvo", className="card-title"),
-                                html.Div([
-                                    html.Div("Forma física atual vs objetivo", className="text-muted small"),
-                                    dbc.Progress(
-                                        value=min(100, (last_metric['ctl'] / config.get('ctl_target', 50.0) * 100) if config.get('ctl_target', 50.0) > 0 else 0), 
-                                        className="mt-2 progress-animated", 
-                                        style={'height': '12px'}, 
-                                        color="success" if last_metric['ctl'] >= config.get('ctl_target', 50.0) else "info", 
-                                        animated=True, 
-                                        striped=True
-                                    ),
-                                    html.Small(f"{last_metric['ctl']:.2f} / {config.get('ctl_target', 50.0):.0f} ({min(100, last_metric['ctl'] / config.get('ctl_target', 50.0) * 100 if config.get('ctl_target', 50.0) > 0 else 0):.0f}%)", className="text-muted")
-                                ])
-                            ])
-                        ], className="mb-3")
-                    ], md=6),
-                    dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.H6("⚠️ ATL vs Máximo", className="card-title"),
-                                html.Div([
-                                    html.Div("Fadiga vs limite recomendado", className="text-muted small"),
-                                    dbc.Progress(
-                                        value=min(100, (last_metric['atl'] / config.get('atl_max', 80.0) * 100) if config.get('atl_max', 80.0) > 0 else 0), 
-                                        className="mt-2 progress-animated", 
-                                        style={'height': '12px'}, 
-                                        color="danger" if last_metric['atl'] >= config.get('atl_max', 80.0) else "warning", 
-                                        animated=True, 
-                                        striped=True
-                                    ),
-                                    html.Small(f"{last_metric['atl']:.2f} / {config.get('atl_max', 80.0):.0f} ({min(100, last_metric['atl'] / config.get('atl_max', 80.0) * 100 if config.get('atl_max', 80.0) > 0 else 0):.0f}%)", className="text-muted")
-                                ])
-                            ])
-                        ], className="mb-3")
-                    ], md=6)
-                ])
-            ])
-        ]),
-        # Separador visual com gradiente
-        html.Div([
-            html.Hr(style={
-                'border': 'none',
-                'height': '3px',
-                'background': 'linear-gradient(90deg, transparent, #667eea, #764ba2, transparent)',
-                'margin': '4rem 0',
-                'borderRadius': '3px'
-            })
-        ]),
-        
-        # ============ TREINAMENTO: COMO CHEGAR LÁ ============
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H1("🏃 Treinamento", className="text-warning mb-2", style={'fontWeight': '700'}),
-                    html.P("Suas zonas de intensidade e atividade semanal", className="text-muted mb-4", style={'fontSize': '1.1rem'})
-                ], className="text-center py-3")
-            ])
-        ], className="bg-light rounded-3 mb-4"),
-
-        # Zonas de intensidade
-        dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardHeader([
-                        html.H5("🏃‍♂️ Zonas de Corrida (pace)", className="mb-0 text-primary", style={'fontWeight': '600'})
-                    ]),
-                    dbc.CardBody([
-                        dbc.Table([
-                            html.Thead([
-                                html.Tr([html.Th("Zona"), html.Th("Pace"), html.Th("Descrição")])
-                            ]),
-                            html.Tbody([
-                                html.Tr([html.Td(html.B("Z1")), html.Td("> 6:00"), html.Td("Recuperação")]),
-                                html.Tr([html.Td(html.B("Z2")), html.Td("5:30-6:00"), html.Td("Endurance")]),
-                                html.Tr([html.Td(html.B("Z3")), html.Td("5:00-5:30"), html.Td("Tempo")]),
-                                html.Tr([html.Td(html.B("Z4")), html.Td("4:40-5:00"), html.Td("Limiar")]),
-                                html.Tr([html.Td(html.B("Z5a")), html.Td("4:30-4:40"), html.Td("VO2max (a)")]),
-                                html.Tr([html.Td(html.B("Z5b")), html.Td("4:15-4:30"), html.Td("VO2max (b)")]),
-                                html.Tr([html.Td(html.B("Z5c")), html.Td("< 4:15"), html.Td("Sprint")])
-                            ])
-                        ], striped=True, bordered=True, hover=True, responsive=True, size="sm", className="mb-0")
-                    ])
-                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
-            ], md=6),
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardHeader([
-                        html.H5("🚴‍♂️ Zonas de Ciclismo (W)", className="mb-0 text-success", style={'fontWeight': '600'})
-                    ]),
-                    dbc.CardBody([
-                        dbc.Table([
-                            html.Thead([
-                                html.Tr([html.Th("Zona"), html.Th("Watts"), html.Th("Descrição")])
-                            ]),
-                            html.Tbody([
-                                html.Tr([html.Td(html.B("Z1")), html.Td("0-150"), html.Td("Recuperação")]),
-                                html.Tr([html.Td(html.B("Z2")), html.Td("151-195"), html.Td("Endurance")]),
-                                html.Tr([html.Td(html.B("Z3")), html.Td("196-234"), html.Td("Tempo")]),
-                                html.Tr([html.Td(html.B("Z4")), html.Td("235-260"), html.Td("Limiar")]),
-                                html.Tr([html.Td(html.B("Z5")), html.Td("261-312"), html.Td("VO2max")]),
-                                html.Tr([html.Td(html.B("Z6")), html.Td("> 312"), html.Td("Anaeróbio")])
-                            ])
-                        ], striped=True, bordered=True, hover=True, responsive=True, size="sm", className="mb-0")
-                    ])
-                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
-            ], md=6)
-        ], className="mb-4"),
-
-        # Resumo semanal
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("📊 Resumo Semanal", className="mb-2", style={'fontWeight': '700'}),
-                    html.Div(style={'width': '60px', 'height': '4px', 'background': 'linear-gradient(90deg, #4facfe, #00f2fe)', 'margin': '0 auto 0.5rem', 'borderRadius': '2px'}),
-                    html.P(f"Semana atual: {weekly_summary['period']}", className="text-muted mb-4")
-                ], className="text-center")
-            ])
-        ], className="mb-3"),
-
-        # Cards do resumo semanal
-        dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.Div([
-                                html.Div("⏱️", style={'fontSize': '2rem'}),
-                                dbc.Badge(f"{weekly_summary['activities']} treinos", color="primary", className="mb-2", style={'fontSize': '0.65rem'})
-                            ], className="mb-2"),
-                            html.H6("Horas Completadas", className="text-muted mb-2", style={'fontWeight': '600', 'fontSize': '0.85rem'}),
-                            html.H3(f"{weekly_summary['hours_formatted']}", className="text-primary mb-1", style={'fontWeight': '700'}),
-                            html.Small(f"Meta: {format_hours_to_hms(config.get('weekly_hours_goal', 10.0))}", className="text-muted", style={'fontSize': '0.7rem'})
-                        ], className="text-center")
-                    ])
-                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'borderTop': '4px solid #2196F3'})
-            ], md=3),
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.Div([
-                                html.Div("🎯", style={'fontSize': '2rem'}),
-                                dbc.Badge(f"{(weekly_summary['tss']/config.get('weekly_tss_goal', 300)*100):.0f}% da meta" if config.get('weekly_tss_goal', 300) > 0 else "0%", 
-                                         color="success" if weekly_summary['tss'] >= config.get('weekly_tss_goal', 300) else "warning", 
-                                         className="mb-2", style={'fontSize': '0.65rem'})
-                            ], className="mb-2"),
-                            html.H6("TSS Total", className="text-muted mb-2", style={'fontWeight': '600', 'fontSize': '0.85rem'}),
-                            html.H3(f"{weekly_summary['tss']:.0f}", className="text-warning mb-1", style={'fontWeight': '700'}),
-                            html.Small(f"Meta: {config.get('weekly_tss_goal', 300)}", className="text-muted", style={'fontSize': '0.7rem'})
-                        ], className="text-center")
-                    ])
-                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'borderTop': '4px solid #ffc107'})
-            ], md=3),
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.Div([
-                                html.Div("🏃", style={'fontSize': '2rem'}),
-                                dbc.Badge(f"{(weekly_summary['activities']/config.get('weekly_activities_goal', 5)*100):.0f}% da meta" if config.get('weekly_activities_goal', 5) > 0 else "0%",
-                                         color="success" if weekly_summary['activities'] >= config.get('weekly_activities_goal', 5) else "warning",
-                                         className="mb-2", style={'fontSize': '0.65rem'})
-                            ], className="mb-2"),
-                            html.H6("Atividades", className="text-muted mb-2", style={'fontWeight': '600', 'fontSize': '0.85rem'}),
-                            html.H3(f"{weekly_summary['activities']}", className="text-success mb-1", style={'fontWeight': '700'}),
-                            html.Small(f"Meta: {config.get('weekly_activities_goal', 5)}", className="text-muted", style={'fontSize': '0.7rem'})
-                        ], className="text-center")
-                    ])
-                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'borderTop': '4px solid #28a745'})
-            ], md=3),
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Div([
-                            html.Div([
-                                html.Div("📏", style={'fontSize': '2rem'}),
-                                dbc.Badge(f"{(weekly_summary['distance']/config.get('weekly_distance_goal', 50.0)*100):.0f}% da meta" if config.get('weekly_distance_goal', 50.0) > 0 else "0%",
-                                         color="success" if weekly_summary['distance'] >= config.get('weekly_distance_goal', 50.0) else "warning",
-                                         className="mb-2", style={'fontSize': '0.65rem'})
-                            ], className="mb-2"),
-                            html.H6("Distância", className="text-muted mb-2", style={'fontWeight': '600', 'fontSize': '0.85rem'}),
-                            html.H3(f"{weekly_summary['distance']:.1f}km", className="text-danger mb-1", style={'fontWeight': '700'}),
-                            html.Small(f"Meta: {config.get('weekly_distance_goal', 50.0):.0f}km", className="text-muted", style={'fontSize': '0.7rem'})
-                        ], className="text-center")
-                    ])
-                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'borderTop': '4px solid #dc3545'})
-            ], md=3)
-        ], className="mb-4"),
-
-        # Gráfico semanal
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H4("📈 Treinos da Semana", className="mb-2", style={'fontWeight': '700'}),
-                    html.Div(style={'width': '50px', 'height': '3px', 'background': 'linear-gradient(90deg, #667eea, #764ba2)', 'marginBottom': '1rem', 'borderRadius': '2px'})
-                ]),
-                dcc.Graph(
-                    figure=create_weekly_chart(),
-                    style={'height': '400px', 'width': '100%'},
-                    config={'displayModeBar': False, 'responsive': True}
-                )
-            ], md=12, style={'padding': '0 15px'})
-        ], className="mb-4"),
-
-        # Distribuição por tipo
-        dbc.Row([
-            dbc.Col([
-                html.H4("🥧 Distribuição dos Tipos de Treino", className="mb-3"),
-                dcc.Graph(
-                    figure=create_distribution_chart(),
-                    style={'height': '350px'},
-                    config={'displayModeBar': False}
-                )
-            ])
-        ]),
-
-        # Status de treinamento
-        dbc.Row([
-            dbc.Col([
-                html.H4("📊 Status de Treinamento", className="mb-3"),
-                dbc.Alert([
-                    html.H5("✅ Recuperado", className="alert-heading"),
-                    html.P("Você está bem descansado, ótimo para treinos intensos!", className="mb-0")
-                ], color="success", className="mb-4")
-            ])
-        ]),
-
-# Separador visual
-        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
-        
-        # ============ ANÁLISE: ENTENDENDO SUA JORNADA ============
+        # ============ ANÁLISE: TENDÊNCIAS HISTÓRICAS ============
         dbc.Row([
             dbc.Col([
                 html.Div([
                     html.H1("📈 Análise", className="text-info mb-2", style={'fontWeight': '700'}),
-                    html.P("Tendências históricas e evolução do seu treinamento", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                    html.P("Tendências históricas e evolução do seu treinamento (42 dias)", className="text-muted mb-4", style={'fontSize': '1.1rem'})
                 ], className="text-center py-3")
             ])
         ], className="bg-light rounded-3 mb-4"),
@@ -2681,82 +2121,7 @@ def render_dashboard():
                     dbc.CardBody([
                         dcc.Graph(
                             figure=create_metrics_chart(metrics),
-                            style={'height': '1000px'},
-                            config={'displayModeBar': False}
-                        )
-                    ])
-                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
-            ])
-        ], className="mb-4"),
-        
-        # ============ CONQUISTAS GAMIFICADAS ============
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("🎮 Conquistas Desbloqueadas", className="mb-3 text-success", style={'fontWeight': '700'}),
-                    html.P("Acompanhe seu progresso e desbloqueie badges especiais", className="text-muted mb-4", style={'fontSize': '0.95rem'})
-                ], className="text-center")
-            ])
-        ]),
-        
-        dbc.Row([
-            dbc.Col([
-                dbc.Row([
-                    *[dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.Div([
-                                    html.Div(achievement['icon'], 
-                                            style={'fontSize': '3rem', 
-                                                   'opacity': '1' if achievement['unlocked'] else '0.3',
-                                                   'filter': 'none' if achievement['unlocked'] else 'grayscale(100%)'},
-                                            className="mb-2"),
-                                    html.H6(achievement['title'], 
-                                           className="mb-2",
-                                           style={'fontWeight': '700', 
-                                                  'color': '#28a745' if achievement['unlocked'] else '#6c757d'}),
-                                    html.P(achievement['description'], 
-                                          className="small text-muted mb-3",
-                                          style={'fontSize': '0.8rem', 'minHeight': '40px'}),
-                                    dbc.Progress(
-                                        value=achievement['progress'],
-                                        color=achievement['color'],
-                                        className="mb-2",
-                                        style={'height': '8px'},
-                                        striped=not achievement['unlocked'],
-                                        animated=not achievement['unlocked']
-                                    ),
-                                    html.Small(f"{achievement['progress']}%", 
-                                              className="text-muted",
-                                              style={'fontSize': '0.7rem'})
-                                ], className="text-center")
-                            ])
-                        ], className="shadow-sm border-0 h-100", 
-                           style={'borderRadius': '12px',
-                                  'background': 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)' if not achievement['unlocked'] 
-                                              else 'linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%)',
-                                  'borderTop': f"4px solid {'#28a745' if achievement['unlocked'] else '#6c757d'}"})
-                    ], md=2, className="mb-3") for achievement in calculate_achievements(metrics, workouts)]
-                ])
-            ])
-        ], className="mb-5"),
-        
-        # ============ TENDÊNCIA MENSAL ============
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("📊 Evolução Mensal", className="mb-3 text-primary", style={'fontWeight': '700'}),
-                    html.P("Visualize a distribuição de treinos e evolução do CTL nos últimos 6 meses", className="text-muted mb-4", style={'fontSize': '0.95rem'})
-                ], className="text-center")
-            ])
-        ]),
-        
-        dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        dcc.Graph(
-                            figure=create_monthly_trend_chart(metrics, workouts),
+                            style={'height': '600px'},
                             config={'displayModeBar': False}
                         )
                     ])
@@ -2766,177 +2131,14 @@ def render_dashboard():
 
         # Separador visual
         html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
-        
-        # ============ PREVISÕES E RECOMENDAÇÕES ============
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H1("🔮 Previsões & Recomendações", className="text-purple mb-2", style={'fontWeight': '700', 'color': '#6f42c1'}),
-                    html.P("Insights baseados nas suas tendências de treinamento", className="text-muted mb-4", style={'fontSize': '1.1rem'})
-                ], className="text-center py-3")
-            ])
-        ], className="bg-light rounded-3 mb-4"),
-        
-        dbc.Row([
-            dbc.Col([
-                dbc.Row([
-                    *[dbc.Col([
-                        dbc.Card([
-                            dbc.CardBody([
-                                html.Div([
-                                    html.Div(pred['icon'], style={'fontSize': '2.5rem'}, className="mb-2"),
-                                    html.H5(pred['title'], className="mb-3", style={'fontWeight': '700', 'color': '#6f42c1'}),
-                                    html.P(pred['prediction'], className="mb-2", style={'fontSize': '0.95rem', 'fontWeight': '500'}),
-                                    html.Hr(className="my-2") if 'reason' in pred else None,
-                                    html.P([
-                                        html.Strong("💡 "),
-                                        pred.get('reason', '')
-                                    ], className="small text-muted mb-2") if 'reason' in pred else None,
-                                    html.Div([
-                                        dbc.Badge([
-                                            "📅 " + pred.get('date', '') if 'date' in pred else "",
-                                        ], color="light", className="me-2") if 'date' in pred else None,
-                                        dbc.Badge([
-                                            "🎯 Confiança: " + pred.get('confidence', 'média').capitalize()
-                                        ], color={'alta': 'success', 'média': 'info', 'baixa': 'warning'}.get(pred.get('confidence', 'média'), 'info'))
-                                    ], className="mt-2")
-                                ], className="text-center")
-                            ])
-                        ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'borderTop': '4px solid #6f42c1'})
-                    ], md=4, className="mb-3") for pred in generate_predictions(metrics, config)]
-                ])
-            ])
-        ], className="mb-4"),
-        
-        # Botões de exportação
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H5("📥 Exportar Dados", className="mb-3", style={'fontWeight': '600'}),
-                    dbc.ButtonGroup([
-                        dbc.Button([
-                            "📊 Exportar Métricas (CSV)",
-                        ], id="btn-export-metrics", color="primary", className="me-2"),
-                        dbc.Button([
-                            "🏃 Exportar Atividades (CSV)",
-                        ], id="btn-export-workouts", color="success"),
-                    ])
-                ], className="text-center p-4", style={'background': '#f8f9fa', 'borderRadius': '12px'})
-            ])
-        ], className="mb-5"),
-        
-        # Download components (hidden)
-        dcc.Download(id="download-metrics"),
-        dcc.Download(id="download-workouts"),
 
-        # Separador visual
-        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
-        
-        # ============ REFERÊNCIAS PARA IRONMAN ============
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H1("🎯 Referências", className="text-danger mb-2", style={'fontWeight': '700'}),
-                    html.P("Valores de referência para provas de Ironman", className="text-muted mb-4", style={'fontSize': '1.1rem'})
-                ], className="text-center py-3")
-            ])
-        ], className="bg-light rounded-3 mb-4"),
 
-        dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        dbc.Accordion([
-                            dbc.AccordionItem([
-                                dbc.Row([
-                                    dbc.Col([
-                                        html.H5("8 semanas antes da prova", className="text-primary", style={'fontWeight': '600'}),
-                                        html.Ul([
-                                            html.Li("💪 Forma Física (CTL): ~50"),
-                                            html.Li("😴 Fadiga (ATL): ~25"),
-                                            html.Li("⚖️ Equilíbrio (TSB): ~25")
-                                        ], className="mb-3")
-                                    ], md=6),
-                                    dbc.Col([
-                                        html.H5("2 semanas antes da prova", className="text-warning", style={'fontWeight': '600'}),
-                                        html.Ul([
-                                            html.Li("💪 Forma Física (CTL): ~80"),
-                                            html.Li("😴 Fadiga (ATL): ~40"),
-                                            html.Li("⚖️ Equilíbrio (TSB): ~40")
-                                        ], className="mb-3")
-                                    ], md=6)
-                                ]),
-                                dbc.Row([
-                                    dbc.Col([
-                                        html.H5("Semana da prova", className="text-success", style={'fontWeight': '600'}),
-                                        html.Ul([
-                                            html.Li("💪 Forma Física (CTL): ~90"),
-                                            html.Li("😴 Fadiga (ATL): ~45"),
-                                            html.Li("⚖️ Equilíbrio (TSB): ~45")
-                                        ], className="mb-3")
-                                    ], md=6),
-                                    dbc.Col([
-                                        html.H5("📊 Valores atuais", className="text-info", style={'fontWeight': '600'}),
-                                        html.Ul([
-                                            html.Li(f"💪 CTL: {last_metric['ctl']:.2f}"),
-                                            html.Li(f"😴 ATL: {last_metric['atl']:.2f}"),
-                                            html.Li(f"⚖️ TSB: {last_metric['tsb']:.2f}")
-                                        ], className="mb-3")
-                                    ], md=6)
-                                ])
-                            ], title="🎯 Referências para Amador Bem Treinado - Meio Ironman")
-                        ], start_collapsed=True)
-                    ])
-                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
-            ])
-        ], className="mb-4"),
 
-        # Separador visual
-        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
-        
-        # ============ APRENDIZADO: ENTENDA MELHOR ============
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H1("📚 Aprendizado", className="text-secondary mb-2", style={'fontWeight': '700'}),
-                    html.P("Informações educacionais e referências para otimizar seu treinamento", className="text-muted mb-4", style={'fontSize': '1.1rem'})
-                ], className="text-center py-3")
-            ])
-        ], className="bg-light rounded-3 mb-4"),
 
-        dbc.Row([
-            dbc.Col([
-                dbc.Accordion([
-                    dbc.AccordionItem([
-                        dbc.Row([
-                            dbc.Col([
-                                html.H5("💪 CTL (Forma Física Crônica)"),
-                                html.P("Representa sua forma física geral, construída ao longo de ~6 semanas. Valores mais altos = você está mais preparado para provas longas. Para amador bem treinado em Ironman: ideal 50-90"),
-                                html.H5("😴 ATL (Fadiga Aguda)"),
-                                html.P("Mostra a fadiga recente (últimos 7 dias). Valores altos = você precisa de descanso. Idealmente ATL < CTL para evitar overtraining.")
-                            ], md=6),
-                            dbc.Col([
-                                html.H5("⚖️ TSB (Equilíbrio de Treino)"),
-                                html.P("Diferença entre CTL e ATL: TSB = CTL - ATL. Positivo = recuperação (bom para treinar duro). Negativo = fadiga (precisa descansar). É como um 'saldo' de energia.")
-                            ], md=6)
-                        ])
-                    ], title="📚 O que significa cada métrica?")
-                ], start_collapsed=True)
-            ])
-        ], className="mb-4"),
 
-        # Separador visual com gradiente
-        html.Div([
-            html.Hr(style={
-                'border': 'none',
-                'height': '3px',
-                'background': 'linear-gradient(90deg, transparent, #43e97b, #38f9d7, transparent)',
-                'margin': '4rem 0',
-                'borderRadius': '3px'
-            })
-        ]),
 
-        # ============ ÚLTIMAS ATIVIDADES ============
+
+# ============ ÚLTIMAS ATIVIDADES ============
         dbc.Row([
             dbc.Col([
                 html.Div([
@@ -2967,6 +2169,36 @@ def render_dashboard():
                 'borderRadius': '3px'
             })
         ]),
+
+        # ============ TREINOS DA SEMANA ============
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H4("📈 Treinos da Semana", className="mb-2", style={'fontWeight': '700'}),
+                    html.Div(style={'width': '50px', 'height': '3px', 'background': 'linear-gradient(90deg, #667eea, #764ba2)', 'marginBottom': '1rem', 'borderRadius': '2px'})
+                ]),
+                dcc.Graph(
+                    figure=create_weekly_chart(),
+                    style={'height': '400px', 'width': '100%'},
+                    config={'displayModeBar': False, 'responsive': True}
+                )
+            ], md=12, style={'padding': '0 15px'})
+        ], className="mb-4"),
+
+        # ============ DISTRIBUIÇÃO DOS TIPOS DE TREINO ============
+        dbc.Row([
+            dbc.Col([
+                html.H4("🥧 Distribuição dos Tipos de Treino", className="mb-3"),
+                dcc.Graph(
+                    figure=create_distribution_chart(),
+                    style={'height': '350px'},
+                    config={'displayModeBar': False}
+                )
+            ])
+        ], className="mb-4"),
+
+        # Separador visual
+        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
 
         # ============ HISTÓRICO DE MÉTRICAS ============
         dbc.Row([
@@ -3726,12 +2958,14 @@ def create_metrics_history_table(metrics):
                 date_obj = datetime.fromisoformat(m['date'])
                 date_str = date_obj.strftime('%d/%m')
                 weekday = date_obj.strftime('%a')  # Mon, Tue, etc.
+                daily_load = m.get('daily_load', 0.0)
                 
                 table_rows.append(html.Tr([
                     html.Td(f"{date_str} ({weekday})"),
                     html.Td(f"{m['ctl']:.2f}"),
                     html.Td(f"{m['atl']:.2f}"),
-                    html.Td(f"{m['tsb']:.2f}")
+                    html.Td(f"{m['tsb']:.2f}"),
+                    html.Td(f"{daily_load:.1f}")
                 ]))
                 
             except Exception as e:
@@ -3743,7 +2977,8 @@ def create_metrics_history_table(metrics):
                     html.Th("Data"),
                     html.Th("CTL"),
                     html.Th("ATL"),
-                    html.Th("TSB")
+                    html.Th("TSB"),
+                    html.Th("Carga Diária")
                 ])
             ]),
             html.Tbody(table_rows)
@@ -5044,13 +4279,6 @@ def save_garmin_tokens(garmin_client):
         print(f"Erro ao salvar tokens: {e}")
         return False
 
-def load_metrics():
-    """Carrega métricas de fitness do armazenamento local"""
-    if METRICS_FILE.exists():
-        with open(METRICS_FILE, "r") as f:
-            return json.load(f)
-    return []
-
 def save_metrics(metrics):
     """Salva métricas de fitness no armazenamento local"""
     with open(METRICS_FILE, "w") as f:
@@ -5154,27 +4382,6 @@ def _parse_mmss_to_seconds(value: str, default_seconds: int) -> int:
         return mm * 60 + ss
     except Exception:
         return default_seconds
-
-def _activity_category(activity: dict) -> str:
-    """Categoriza atividade baseada no tipo"""
-    activity_type = activity.get('activityType', {})
-    if isinstance(activity_type, dict):
-        type_key = activity_type.get('typeKey', '').lower()
-    else:
-        type_key = str(activity_type).lower()
-
-    if type_key in ['running', 'treadmill_running', 'track_running', 'trail_running', 'indoor_running', 'virtual_running']:
-        return 'running'
-    if type_key in ['cycling', 'road_cycling', 'mountain_biking', 'indoor_cycling', 'gravel_cycling', 'virtual_cycling',
-                   'virtual_ride', 'indoor_biking', 'bike', 'biking', 'e_bike_ride', 'e_mountain_bike_ride',
-                   'commute_cycling', 'touring_cycling', 'recumbent_cycling', 'cyclocross', 'road_biking',
-                   'gravel_biking', 'tandem_cycling', 'bmx', 'fat_bike', 'track_cycling', 'spin_bike']:
-        return 'cycling'
-    if type_key in ['swimming', 'pool_swimming', 'open_water_swimming', 'indoor_swimming', 'lap_swimming']:
-        return 'swimming'
-    if type_key in ['strength_training', 'weight_training', 'functional_strength_training', 'gym_strength_training', 'crossfit', 'hiit']:
-        return 'strength'
-    return 'other'
 
 def calculate_goals_progress(activities, config):
     """Calcula progresso das metas baseado nas atividades"""
