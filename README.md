@@ -207,6 +207,48 @@ Configure os seguintes parâmetros na página de configuração:
 - **🎯 Metas**: Configuração e acompanhamento de objetivos
 - **⚙️ Configuração**: Gerenciamento de credenciais e parâmetros
 
+## 🌐 Hospedagem e Deploy
+
+### ✅ Provedores Recomendados
+
+Para **sincronização em tempo real** com Garmin, recomendamos estes provedores:
+
+#### 🚂 **Railway** (Recomendado - Fácil e Gratuito)
+```bash
+# Instale Railway CLI
+curl -fsSL https://railway.app/install.sh | sh
+
+# Faça login e deploy
+railway login
+railway init
+railway up
+```
+
+#### 🟣 **Render** (Gratuito com limites)
+- Conecte seu repositório GitHub
+- Deploy automático a cada push
+- Bom para projetos pessoais
+
+#### 🟠 **Heroku** (Profissional)
+```bash
+# Deploy profissional
+heroku create seu-app-garmin
+git push heroku main
+```
+
+### 🚫 Limitações do PythonAnywhere
+
+**IMPORTANTE**: O PythonAnywhere tem restrições de rede que **impedem completamente** a sincronização com Garmin Connect. Mesmo com tokens válidos, todas as tentativas de conexão falharão.
+
+**Sintomas**:
+- Erro 403 Forbidden no proxy
+- `ProxyError: Unable to connect to proxy`
+- Impossível buscar dados do Garmin
+
+**Solução**: Migre para Railway, Render ou Heroku para funcionalidade completa.
+
+📖 **Mais detalhes**: Veja [PYTHONANYWHERE_LIMITATIONS.md](PYTHONANYWHERE_LIMITATIONS.md)
+
 ## 🔒 Segurança e Privacidade
 
 - **Armazenamento Local**: Todas as credenciais e dados são armazenados apenas no seu dispositivo
