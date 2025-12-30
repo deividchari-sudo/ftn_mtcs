@@ -15,6 +15,43 @@ import calendar
 from utils import *
 from ai_chat import FitnessAI
 from details_page import render_details
+from calculations import calculate_trimp, compute_tss_variants, calculate_fitness_metrics, _activity_category, _parse_mmss_to_seconds
+from storage import (
+    DATA_DIR, CONFIG_FILE, CREDENTIALS_FILE, METRICS_FILE, WORKOUTS_FILE,
+    load_config, save_config,
+    load_credentials, save_credentials,
+    load_garmin_tokens, validate_garmin_tokens_locally, save_garmin_tokens,
+    load_metrics, save_metrics,
+    load_workouts, save_workouts
+)
+
+# Função para enriquecer workouts com TSS calculado dinamicamente
+def enrich_workouts_with_tss(workouts, config=None):
+    """Calcula TSS dinamicamente para cada workout (não salva)"""
+    if config is None:
+        config = load_config()
+    
+    enriched = []
+    for w in workouts:
+        w_copy = dict(w)
+        
+        # Remover TSS antigo se existir
+        if 'tss' in w_copy:
+            old_tss = w_copy['tss']
+            del w_copy['tss']
+        else:
+            old_tss = None
+        
+        # Calcular TSS novo
+        tss_result = compute_tss_variants(w_copy, config)
+        new_tss = tss_result.get('tss', 0.0)
+        w_copy['tss'] = new_tss
+        w_copy['tss_type'] = tss_result.get('tss_type', 'unknown')
+        w_copy['category'] = tss_result.get('category', _activity_category(w))
+        
+        enriched.append(w_copy)
+
+    return enriched
 
 # Função auxiliar para converter horas decimais em hh:mm:ss
 def format_hours_to_hms(hours):
@@ -27,934 +64,10 @@ def format_hours_to_hms(hours):
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-# Configurações
-DATA_DIR = Path.home() / ".fitness_metrics"
-DATA_DIR.mkdir(exist_ok=True)
-
-CONFIG_FILE = DATA_DIR / "user_config.json"
-CREDENTIALS_FILE = DATA_DIR / "garmin_credentials.json"
-METRICS_FILE = DATA_DIR / "fitness_metrics.json"
-WORKOUTS_FILE = DATA_DIR / "workouts_42_dias.json"
-
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUX])
 app.title = "Fitness Metrics Dashboard"
 # Expor WSGI server para provedores como Render/Gunicorn
 server = app.server
-
-# CSS customizado para aparência moderna
-custom_css = """
-<style>
-/* ========== ANIMAÇÕES E TRANSIÇÕES ========== */
-@keyframes slideInUp {
-    from {
-        opacity: 0;
-        transform: translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-@keyframes progressFill {
-    from {
-        width: 0;
-    }
-    to {
-        width: var(--progress-width);
-    }
-}
-
-@keyframes pulse {
-    0%, 100% {
-        box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.4);
-    }
-    50% {
-        box-shadow: 0 0 0 8px rgba(102, 126, 234, 0);
-    }
-}
-
-/* ========== CARDS COM HIERARQUIA VISUAL ========== */
-.card {
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
-                box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
-    animation: slideInUp 0.5s ease-out;
-    border: none !important;
-}
-
-.card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 12px 24px rgba(0,0,0,0.12), 0 8px 16px rgba(0,0,0,0.08) !important;
-}
-
-/* Cards de status com destaque */
-.status-card {
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
-}
-
-.status-card:hover {
-    transform: scale(1.03);
-    animation: pulse 2s infinite;
-}
-
-.status-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(135deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.1) 100%);
-    opacity: 0;
-    transition: opacity 0.3s;
-}
-
-.status-card:hover::before {
-    opacity: 1;
-}
-
-/* ========== PROGRESS BARS ANIMADAS COM GRADIENTE ========== */
-.progress {
-    border-radius: 12px;
-    background: linear-gradient(90deg, #e9ecef 0%, #f8f9fa 100%);
-    box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
-    height: 12px !important;
-    overflow: visible;
-    position: relative;
-}
-
-.progress-bar {
-    border-radius: 12px;
-    transition: width 1.5s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
-}
-
-/* Gradientes para diferentes cores de progresso */
-.progress-bar.bg-success {
-    background: linear-gradient(90deg, #28a745 0%, #20c997 50%, #28a745 100%) !important;
-    background-size: 200% 100% !important;
-    animation: shimmer 3s infinite;
-    box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
-}
-
-.progress-bar.bg-primary {
-    background: linear-gradient(90deg, #007bff 0%, #0056b3 50%, #007bff 100%) !important;
-    background-size: 200% 100% !important;
-    animation: shimmer 3s infinite;
-    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
-}
-
-.progress-bar.bg-warning {
-    background: linear-gradient(90deg, #ffc107 0%, #ffb300 50%, #ffc107 100%) !important;
-    background-size: 200% 100% !important;
-    animation: shimmer 3s infinite;
-    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3);
-}
-
-.progress-bar.bg-info {
-    background: linear-gradient(90deg, #17a2b8 0%, #138496 50%, #17a2b8 100%) !important;
-    background-size: 200% 100% !important;
-    animation: shimmer 3s infinite;
-    box-shadow: 0 2px 8px rgba(23, 162, 184, 0.3);
-}
-
-.progress-bar.bg-danger {
-    background: linear-gradient(90deg, #dc3545 0%, #c82333 50%, #dc3545 100%) !important;
-    background-size: 200% 100% !important;
-    animation: shimmer 3s infinite;
-    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
-}
-
-@keyframes shimmer {
-    0% {
-        background-position: 200% 0;
-    }
-    100% {
-        background-position: -200% 0;
-    }
-}
-
-/* Indicador de porcentagem na barra */
-.progress-bar::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(to bottom, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 100%);
-    border-radius: 12px;
-}
-
-/* ========== TABELAS MODERNAS ========== */
-.table {
-    font-size: 0.9rem;
-    border-collapse: separate;
-    border-spacing: 0;
-}
-
-.table th {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    font-weight: 600;
-    border: none;
-    padding: 0.75rem 0.5rem;
-    text-align: center;
-    font-size: 0.85rem;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    position: relative;
-}
-
-.table th::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
-}
-
-.table td {
-    vertical-align: middle;
-    padding: 0.6rem 0.5rem;
-    border-bottom: 1px solid #e9ecef;
-    font-size: 0.85rem;
-    transition: background-color 0.2s ease;
-}
-
-.table tbody tr:nth-of-type(odd) {
-    background-color: rgba(0, 123, 255, 0.02);
-}
-
-.table tbody tr:hover {
-    background: linear-gradient(90deg, rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.08));
-    transform: scale(1.01);
-    transition: all 0.2s ease;
-}
-
-/* ========== SEPARADORES VISUAIS ========== */
-hr {
-    border: 0;
-    height: 3px;
-    background: linear-gradient(90deg, transparent, #e9ecef 20%, #e9ecef 80%, transparent);
-    margin: 3rem 0;
-    position: relative;
-}
-
-hr::after {
-    content: '';
-    position: absolute;
-    top: -1px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 60px;
-    height: 5px;
-    background: linear-gradient(90deg, #667eea, #764ba2);
-    border-radius: 3px;
-}
-
-/* ========== HEADERS DE SEÇÃO ========== */
-.section-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    position: relative;
-    display: inline-block;
-}
-
-/* ========== TIPOGRAFIA COM HIERARQUIA ========== */
-h1 {
-    font-weight: 800 !important;
-    letter-spacing: -0.5px;
-    line-height: 1.2;
-    margin-bottom: 0.5rem;
-}
-
-h2 {
-    font-weight: 700 !important;
-    letter-spacing: -0.3px;
-    line-height: 1.3;
-}
-
-h3, h4 {
-    font-weight: 600 !important;
-    letter-spacing: -0.2px;
-}
-
-h5, h6 {
-    font-weight: 600 !important;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-size: 0.85rem;
-}
-
-/* ========== ACCORDION MODERNO ========== */
-.accordion-button {
-    border-radius: 10px !important;
-    font-weight: 600;
-    transition: all 0.3s ease;
-    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-}
-
-.accordion-button:not(.collapsed) {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-}
-
-.accordion-button:hover {
-    transform: translateX(4px);
-}
-
-/* ========== ESPAÇAMENTO COM HIERARQUIA ========== */
-.mb-5 {
-    margin-bottom: 3rem !important;
-}
-
-.mb-4 {
-    margin-bottom: 2rem !important;
-}
-
-.mb-3 {
-    margin-bottom: 1.5rem !important;
-}
-
-.py-4 {
-    padding-top: 2rem !important;
-    padding-bottom: 2rem !important;
-}
-
-.py-3 {
-    padding-top: 1.5rem !important;
-    padding-bottom: 1.5rem !important;
-}
-
-/* ========== BADGES MODERNOS ========== */
-.badge {
-    font-weight: 600;
-    padding: 0.4em 0.8em;
-    border-radius: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    transition: all 0.2s ease;
-}
-
-.badge:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-}
-
-/* ========== EFEITOS DE FOCO E INTERAÇÃO ========== */
-*:focus {
-    outline: 2px solid rgba(102, 126, 234, 0.5);
-    outline-offset: 2px;
-}
-
-/* ========== LOADING E SKELETON ========== */
-@keyframes skeleton-loading {
-    0% {
-        background-position: 200% 0;
-    }
-    100% {
-        background-position: -200% 0;
-    }
-}
-
-.skeleton {
-    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-    background-size: 200% 100%;
-    animation: skeleton-loading 1.5s infinite;
-}
-
-/* ========== MODO ESCURO ========== */
-body.dark-mode {
-    background-color: #1a1a1a !important;
-    color: #e0e0e0 !important;
-}
-
-body.dark-mode .card {
-    background-color: #2d2d2d !important;
-    color: #e0e0e0 !important;
-}
-
-body.dark-mode .bg-light {
-    background-color: #2d2d2d !important;
-}
-
-body.dark-mode .table {
-    background-color: #2d2d2d !important;
-    color: #e0e0e0 !important;
-}
-
-body.dark-mode .table tbody tr:hover {
-    background: linear-gradient(90deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2)) !important;
-}
-
-body.dark-mode .text-muted {
-    color: #999 !important;
-}
-
-/* Botão de toggle modo escuro */
-.dark-mode-toggle {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    z-index: 9999;
-    border-radius: 50px;
-    padding: 8px 20px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border: none;
-    cursor: pointer;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    transition: all 0.3s ease;
-    font-weight: 600;
-    font-size: 0.9rem;
-}
-
-.dark-mode-toggle:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(0,0,0,0.2);
-}
-
-/* ========== ESTILOS MODO ESCURO ========== */
-/* Background e cores base */
-#app-container[style*="background-color: rgb(36, 36, 40)"],
-#app-container[style*="backgroundColor: #242428"] {
-    background-color: #0d1117 !important;
-}
-
-/* Cards - estilo Strava dark */
-#app-container[style*="background-color: rgb(36, 36, 40)"] .card,
-#app-container[style*="backgroundColor: #242428"] .card {
-    background-color: #2D2D31 !important;
-    color: #FFFFFF !important;
-    border: 1px solid #404044 !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
-    transition: all 0.3s ease !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .card:hover,
-#app-container[style*="backgroundColor: #242428"] .card:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
-    border-color: #505054 !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .card-header,
-#app-container[style*="backgroundColor: #242428"] .card-header {
-    background-color: #0d1117 !important;
-    color: #c9d1d9 !important;
-    border-bottom: 1px solid #30363d !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .card-body,
-#app-container[style*="backgroundColor: #242428"] .card-body {
-    background-color: #2D2D31 !important;
-    color: #c9d1d9 !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .bg-light,
-#app-container[style*="backgroundColor: #242428"] .bg-light {
-    background-color: #2D2D31 !important;
-}
-
-/* Todos os títulos e textos */
-#app-container[style*="background-color: rgb(36, 36, 40)"] h1,
-#app-container[style*="backgroundColor: #242428"] h1,
-#app-container[style*="background-color: rgb(36, 36, 40)"] h2,
-#app-container[style*="backgroundColor: #242428"] h2,
-#app-container[style*="background-color: rgb(36, 36, 40)"] h3,
-#app-container[style*="backgroundColor: #242428"] h3,
-#app-container[style*="background-color: rgb(36, 36, 40)"] h4,
-#app-container[style*="backgroundColor: #242428"] h4,
-#app-container[style*="background-color: rgb(36, 36, 40)"] h5,
-#app-container[style*="backgroundColor: #242428"] h5,
-#app-container[style*="background-color: rgb(36, 36, 40)"] h6,
-#app-container[style*="backgroundColor: #242428"] h6,
-#app-container[style*="background-color: rgb(36, 36, 40)"] p,
-#app-container[style*="backgroundColor: #242428"] p,
-#app-container[style*="background-color: rgb(36, 36, 40)"] span,
-#app-container[style*="backgroundColor: #242428"] span,
-#app-container[style*="background-color: rgb(36, 36, 40)"] div,
-#app-container[style*="backgroundColor: #242428"] div,
-#app-container[style*="background-color: rgb(36, 36, 40)"] label,
-#app-container[style*="backgroundColor: #242428"] label,
-#app-container[style*="background-color: rgb(36, 36, 40)"] strong,
-#app-container[style*="backgroundColor: #242428"] strong,
-#app-container[style*="background-color: rgb(36, 36, 40)"] b,
-#app-container[style*="backgroundColor: #242428"] b {
-    color: #c9d1d9 !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .text-muted,
-#app-container[style*="backgroundColor: #242428"] .text-muted {
-    color: #8b949e !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .text-secondary,
-#app-container[style*="backgroundColor: #242428"] .text-secondary {
-    color: #8b949e !important;
-}
-
-/* Forçar cor clara em elementos específicos */
-#app-container[style*="background-color: rgb(36, 36, 40)"] [style*="color: rgb(33, 37, 41)"],
-#app-container[style*="backgroundColor: #242428"] [style*="color: rgb(33, 37, 41)"],
-#app-container[style*="background-color: rgb(36, 36, 40)"] [style*="color: #212529"],
-#app-container[style*="backgroundColor: #242428"] [style*="color: #212529"] {
-    color: #c9d1d9 !important;
-}
-
-/* Tabelas */
-#app-container[style*="background-color: rgb(36, 36, 40)"] .table,
-#app-container[style*="backgroundColor: #242428"] .table {
-    background-color: transparent !important;
-    color: #c9d1d9 !important;
-    border-color: #30363d !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .table thead th,
-#app-container[style*="backgroundColor: #242428"] .table thead th {
-    background-color: #0d1117 !important;
-    color: #c9d1d9 !important;
-    border-color: #30363d !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .table tbody td,
-#app-container[style*="backgroundColor: #242428"] .table tbody td {
-    color: #c9d1d9 !important;
-    border-color: #30363d !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .table tbody tr:hover,
-#app-container[style*="backgroundColor: #242428"] .table tbody tr:hover {
-    background-color: rgba(56, 139, 253, 0.1) !important;
-}
-
-/* Badges - cores vibrantes Strava */
-#app-container[style*="background-color: rgb(36, 36, 40)"] .badge,
-#app-container[style*="backgroundColor: #242428"] .badge {
-    background-color: #38383C !important;
-    color: #6BB6FF !important;
-    border: 1px solid #404044 !important;
-    font-weight: 600 !important;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3) !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .badge-success,
-#app-container[style*="backgroundColor: #242428"] .badge-success {
-    background-color: #2EA043 !important;
-    color: white !important;
-    border-color: #3FB950 !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .badge-warning,
-#app-container[style*="backgroundColor: #242428"] .badge-warning {
-    background-color: #FFA500 !important;
-    color: white !important;
-    border-color: #FFB84D !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .badge-danger,
-#app-container[style*="backgroundColor: #242428"] .badge-danger {
-    background-color: #F85149 !important;
-    color: white !important;
-    border-color: #FF6B6B !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .badge-primary,
-#app-container[style*="backgroundColor: #242428"] .badge-primary {
-    background-color: #FC5200 !important;
-    color: white !important;
-    border-color: #FF6B35 !important;
-}
-
-/* Progress bars - estilo Strava */
-#app-container[style*="background-color: rgb(36, 36, 40)"] .progress,
-#app-container[style*="backgroundColor: #242428"] .progress {
-    background-color: #38383C !important;
-    border-radius: 8px !important;
-    height: 12px !important;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3) !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .progress-bar,
-#app-container[style*="backgroundColor: #242428"] .progress-bar {
-    background: linear-gradient(135deg, #FC5200 0%, #FF6B35 100%) !important;
-    box-shadow: 0 2px 4px rgba(252, 82, 0, 0.3) !important;
-    transition: width 0.6s ease !important;
-}
-
-/* Botões no modo escuro */
-#app-container[style*="background-color: rgb(36, 36, 40)"] .btn-primary,
-#app-container[style*="backgroundColor: #242428"] .btn-primary {
-    background: linear-gradient(135deg, #FC5200 0%, #FF6B35 100%) !important;
-    border: none !important;
-    color: white !important;
-    box-shadow: 0 4px 12px rgba(252, 82, 0, 0.3) !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .btn-primary:hover,
-#app-container[style*="backgroundColor: #242428"] .btn-primary:hover {
-    box-shadow: 0 6px 16px rgba(252, 82, 0, 0.5) !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .btn-success,
-#app-container[style*="backgroundColor: #242428"] .btn-success {
-    background: linear-gradient(135deg, #2EA043 0%, #3FB950 100%) !important;
-    border: none !important;
-    box-shadow: 0 4px 12px rgba(46, 160, 67, 0.3) !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .btn-success:hover,
-#app-container[style*="backgroundColor: #242428"] .btn-success:hover {
-    box-shadow: 0 6px 16px rgba(46, 160, 67, 0.5) !important;
-}
-
-/* Abas */
-#app-container[style*="background-color: rgb(36, 36, 40)"] .nav-tabs,
-#app-container[style*="backgroundColor: #242428"] .nav-tabs {
-    border-bottom-color: #30363d !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .nav-tabs .nav-link,
-#app-container[style*="backgroundColor: #242428"] .nav-tabs .nav-link {
-    color: #A0A0A5 !important;
-    border-color: transparent !important;
-    background-color: transparent !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .nav-tabs .nav-link.active,
-#app-container[style*="backgroundColor: #242428"] .nav-tabs .nav-link.active {
-    background-color: #2D2D31 !important;
-    color: #FFFFFF !important;
-    border-color: #404044 #404044 #2D2D31 !important;
-    font-weight: 600 !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .nav-tabs .nav-link:hover,
-#app-container[style*="backgroundColor: #242428"] .nav-tabs .nav-link:hover {
-    color: #FFFFFF !important;
-    border-color: #404044 #404044 transparent !important;
-    background-color: rgba(45, 45, 49, 0.5) !important;
-}
-
-/* Alertas - cores vibrantes Strava */
-#app-container[style*="background-color: rgb(36, 36, 40)"] .alert,
-#app-container[style*="backgroundColor: #242428"] .alert {
-    background-color: #2D2D31 !important;
-    border: 1px solid #404044 !important;
-    color: #FFFFFF !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .alert-info,
-#app-container[style*="backgroundColor: #242428"] .alert-info {
-    background-color: rgba(56, 139, 253, 0.15) !important;
-    border-color: #388bfd !important;
-    color: #6BB6FF !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .alert-success,
-#app-container[style*="backgroundColor: #242428"] .alert-success {
-    background-color: rgba(46, 160, 67, 0.15) !important;
-    border-color: #2ea043 !important;
-    color: #5DD879 !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .alert-warning,
-#app-container[style*="backgroundColor: #242428"] .alert-warning {
-    background-color: rgba(255, 165, 0, 0.15) !important;
-    border-color: #FFA500 !important;
-    color: #FFB84D !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] .alert-danger,
-#app-container[style*="backgroundColor: #242428"] .alert-danger {
-    background-color: rgba(248, 81, 73, 0.15) !important;
-    border-color: #f85149 !important;
-    color: #FF6B6B !important;
-}
-
-/* HR separador */
-#app-container[style*="background-color: rgb(36, 36, 40)"] hr,
-#app-container[style*="backgroundColor: #242428"] hr {
-    border-color: #404044 !important;
-    opacity: 1 !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] hr::after,
-#app-container[style*="backgroundColor: #242428"] hr::after {
-    background: linear-gradient(90deg, #FC5200, #FF6B35) !important;
-}
-
-/* Botão modo escuro quando ativo - laranja Strava */
-#app-container[style*="background-color: rgb(36, 36, 40)"] .dark-mode-toggle,
-#app-container[style*="backgroundColor: #242428"] .dark-mode-toggle {
-    background: linear-gradient(135deg, #FC5200 0%, #FF6B35 100%) !important;
-    box-shadow: 0 4px 16px rgba(252, 82, 0, 0.4) !important;
-}
-
-/* Inputs e forms */
-#app-container[style*="background-color: rgb(36, 36, 40)"] input,
-#app-container[style*="backgroundColor: #242428"] input,
-#app-container[style*="background-color: rgb(36, 36, 40)"] select,
-#app-container[style*="backgroundColor: #242428"] select,
-#app-container[style*="background-color: rgb(36, 36, 40)"] textarea,
-#app-container[style*="backgroundColor: #242428"] textarea {
-    background-color: #1A1A1E !important;
-    color: #FFFFFF !important;
-    border-color: #404044 !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] input:focus,
-#app-container[style*="backgroundColor: #242428"] input:focus,
-#app-container[style*="background-color: rgb(36, 36, 40)"] select:focus,
-#app-container[style*="backgroundColor: #242428"] select:focus,
-#app-container[style*="background-color: rgb(36, 36, 40)"] textarea:focus,
-#app-container[style*="backgroundColor: #242428"] textarea:focus {
-    border-color: #FC5200 !important;
-    box-shadow: 0 0 0 0.2rem rgba(252, 82, 0, 0.25) !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] input::placeholder,
-#app-container[style*="backgroundColor: #242428"] input::placeholder {
-    color: #8b949e !important;
-}
-
-/* Scrollbar customizada modo escuro */
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar {
-    width: 12px !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-track,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-track {
-    background: #1A1A1E !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb {
-    background: #404044 !important;
-    border-radius: 6px !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb:hover,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb:hover {
-    background: #505054 !important;
-}
-
-/* Links no modo escuro */
-#app-container[style*="background-color: rgb(36, 36, 40)"] a,
-#app-container[style*="backgroundColor: #242428"] a {
-    color: #6BB6FF !important;
-    transition: color 0.2s ease !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] a:hover,
-#app-container[style*="backgroundColor: #242428"] a:hover {
-    color: #FC5200 !important;
-}
-
-/* Scrollbar customizada modo escuro */
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar {
-    width: 12px !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-track,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-track {
-    background: #1A1A1E !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb {
-    background: #404044 !important;
-    border-radius: 6px !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb:hover,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb:hover {
-    background: #505054 !important;
-}
-
-/* Links no modo escuro */
-#app-container[style*="background-color: rgb(36, 36, 40)"] a,
-#app-container[style*="backgroundColor: #242428"] a {
-    color: #6BB6FF !important;
-    text-decoration: none !important;
-    transition: color 0.2s ease !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] a:hover,
-#app-container[style*="backgroundColor: #242428"] a:hover {
-    color: #FC5200 !important;
-    text-decoration: underline !important;
-}
-
-/* Scrollbar customizada modo escuro */
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar {
-    width: 12px !important;
-    height: 12px !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-track,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-track {
-    background: #1A1A1E !important;
-    border-radius: 6px !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb {
-    background: #404044 !important;
-    border-radius: 6px !important;
-}
-
-#app-container[style*="background-color: rgb(36, 36, 40)"] ::-webkit-scrollbar-thumb:hover,
-#app-container[style*="backgroundColor: #242428"] ::-webkit-scrollbar-thumb:hover {
-    background: #505054 !important;
-}
-
-/* ========== BOTÕES MODERNOS ========== */
-.btn {
-    transition: all 0.3s ease;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border-radius: 8px;
-    padding: 0.5rem 1.5rem;
-}
-
-.btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    border: none;
-}
-
-.btn-success {
-    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-    border: none;
-}
-
-/* ========== TOOLTIPS INFORMATIVOS ========== */
-.info-tooltip {
-    position: relative;
-    display: inline-block;
-    margin-left: 5px;
-    cursor: help;
-}
-
-.info-tooltip .tooltip-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    font-size: 11px;
-    font-weight: bold;
-}
-
-.info-tooltip .tooltip-text {
-    visibility: hidden;
-    width: 280px;
-    background-color: #2D2D31;
-    color: #FFFFFF;
-    text-align: left;
-    border-radius: 8px;
-    padding: 12px;
-    position: absolute;
-    z-index: 10000;
-    bottom: 125%;
-    left: 50%;
-    margin-left: -140px;
-    opacity: 0;
-    transition: opacity 0.3s;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-    font-size: 0.85rem;
-    line-height: 1.4;
-}
-
-.info-tooltip .tooltip-text::after {
-    content: "";
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    margin-left: -5px;
-    border-width: 5px;
-    border-style: solid;
-    border-color: #2D2D31 transparent transparent transparent;
-}
-
-.info-tooltip:hover .tooltip-text {
-    visibility: visible;
-    opacity: 1;
-}
-
-/* ========== BADGE DE ÚLTIMA ATUALIZAÇÃO ========== */
-.last-update-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
-    border: 1px solid rgba(102, 126, 234, 0.3);
-    border-radius: 20px;
-    font-size: 0.8rem;
-    color: #667eea;
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.7; }
-}
-
-/* ========== ATALHOS DE TECLADO ========== */
-.keyboard-shortcuts {
-    position: fixed;
-    bottom: 20px;
-    left: 20px;
-    z-index: 9998;
-    background: rgba(45, 45, 49, 0.95);
-    color: white;
-    padding: 12px 16px;
-    border-radius: 8px;
-    font-size: 0.75rem;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-    display: none;
-}
-
-.keyboard-shortcuts.show {
-    display: block;
-    animation: slideInUp 0.3s ease;
-}
-
-.keyboard-shortcuts kbd {
-    background: #38383C;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: monospace;
-    border: 1px solid #404044;
-}
-</style>
-"""
-
-app.css.append_css({"external_url": custom_css})
 
 # Script JavaScript para funcionalidades extras
 app.index_string = '''
@@ -1187,7 +300,8 @@ def export_metrics_csv(n_clicks):
 def export_workouts_csv(n_clicks):
     """Exporta atividades para CSV"""
     if n_clicks:
-        workouts = load_workouts()
+        workouts = enrich_workouts_with_tss(load_workouts())
+        workouts = enrich_workouts_with_tss(workouts)  # Calcular TSS dinamicamente
         _, csv_data = export_to_csv([], workouts)
         if csv_data:
             return dict(content=csv_data, filename=f"workouts_{datetime.now().strftime('%Y%m%d')}.csv")
@@ -1196,7 +310,7 @@ def export_workouts_csv(n_clicks):
 # Função auxiliar para calcular resumo semanal
 def calculate_weekly_summary():
     """Calcula resumo da semana atual (segunda a domingo)"""
-    workouts = load_workouts()
+    workouts = enrich_workouts_with_tss(load_workouts())
     config = load_config()
     
     # Definir semana atual
@@ -1911,7 +1025,19 @@ def create_monthly_trend_chart(metrics, workouts):
 
 # Funções para renderizar cada aba
 def render_dashboard():
-    metrics = load_metrics()
+    # Recalcular métricas dinamicamente com TSS correto
+    config = load_config()
+    workouts = enrich_workouts_with_tss(load_workouts())
+    
+    # Calcular métricas dos últimos 42 dias
+    from datetime import datetime, timedelta, date as dt_date
+    end_date = dt_date.today()
+    start_date = end_date - timedelta(days=42)
+    
+    metrics = calculate_fitness_metrics(workouts, config, start_date, end_date)
+    
+    # Salvar para outras partes do app usarem
+    save_metrics(metrics)
     
     if not metrics:
         # Dados mock para demonstração
@@ -1971,7 +1097,7 @@ def render_dashboard():
     weekly_summary = calculate_weekly_summary()
     
     # Calcular progresso das metas
-    workouts = load_workouts()
+    workouts = enrich_workouts_with_tss(load_workouts())
     config = load_config()
     goals_progress = calculate_goals_progress(workouts, config)
     
@@ -2576,7 +1702,7 @@ def create_metrics_chart(metrics):
 
 def create_weekly_chart():
     try:
-        workouts = load_workouts()
+        workouts = enrich_workouts_with_tss(load_workouts())
         
         # Definir semana atual (segunda a domingo)
         now = datetime.now()
@@ -2699,7 +1825,7 @@ def create_weekly_chart():
 
 def create_distribution_chart():
     try:
-        workouts = load_workouts()
+        workouts = enrich_workouts_with_tss(load_workouts())
         
         # Definir semana atual (segunda a domingo)
         now = datetime.now()
@@ -2825,7 +1951,7 @@ def create_distribution_chart():
 
 def create_recent_activities_table():
     try:
-        workouts = load_workouts()
+        workouts = enrich_workouts_with_tss(load_workouts())
         if not workouts:
             return html.Div("Nenhuma atividade encontrada.", className="text-muted")
         
@@ -2856,13 +1982,13 @@ def create_recent_activities_table():
                 return dt.fromtimestamp(w['startTimeInSeconds'])
             return dt(1970,1,1)
         
-        recent_workouts = sorted(workouts, key=get_activity_datetime, reverse=True)[:7]
+        recent_workouts = sorted(workouts, key=get_activity_datetime, reverse=True)[:10]
         
         table_rows = []
         for w in recent_workouts:
             try:
                 activity_name = w.get('activityName', 'Atividade Desconhecida')
-                distance = w.get('distance', 0)
+                distance = w.get('distance', 0) or 0
                 duration_hours = float(w.get('duration', 0) or 0) / 3600
                 
                 type_key = (w.get('activityType') or {}).get('typeKey', '')
@@ -2892,16 +2018,19 @@ def create_recent_activities_table():
                 # Calcular pace/velocidade se disponível
                 pace_info = ""
                 if distance > 0 and duration_hours > 0:
-                    if category == 'running':
-                        # Calcular pace (min/km)
-                        pace_min_per_km = (duration_hours * 60) / (distance / 1000)
-                        pace_mins = int(pace_min_per_km)
-                        pace_secs = int((pace_min_per_km - pace_mins) * 60)
-                        pace_info = f"{pace_mins}:{pace_secs:02d}/km"
-                    elif category in ['cycling', 'swimming']:
-                        # Calcular velocidade (km/h)
-                        speed = (distance / 1000) / duration_hours
-                        pace_info = f"{speed:.1f} km/h"
+                    try:
+                        if category == 'running':
+                            # Calcular pace (min/km)
+                            pace_min_per_km = (duration_hours * 60) / (distance / 1000)
+                            pace_mins = int(pace_min_per_km)
+                            pace_secs = int((pace_min_per_km - pace_mins) * 60)
+                            pace_info = f"{pace_mins}:{pace_secs:02d}/km"
+                        elif category in ['cycling', 'swimming']:
+                            # Calcular velocidade (km/h)
+                            speed = (distance / 1000) / duration_hours
+                            pace_info = f"{speed:.1f} km/h"
+                    except:
+                        pace_info = ""
                 
                 # Formatar distância
                 if distance >= 1000:
@@ -2925,6 +2054,8 @@ def create_recent_activities_table():
                 ]))
                 
             except Exception as e:
+                # Continuar mesmo com erro, para garantir que exibimos todas as atividades possíveis
+                print(f"Erro ao processar atividade: {e}")
                 continue
         
         return dbc.Table([
@@ -3086,34 +2217,9 @@ def calculate_modality_progress(activities):
 
     return result
 
-def _activity_category(activity: dict) -> str:
-    """Categoriza atividade baseada no tipo"""
-    activity_type = activity.get('activityType', {})
-    if isinstance(activity_type, dict):
-        type_key = activity_type.get('typeKey', '').lower()
-    else:
-        type_key = str(activity_type).lower()
-
-    if type_key in [
-        'running', 'treadmill_running', 'track_running', 'trail_running', 'indoor_running', 'virtual_running'
-    ]:
-        return 'running'
-    if type_key in [
-        'cycling', 'road_cycling', 'mountain_biking', 'indoor_cycling', 'gravel_cycling', 'virtual_cycling',
-        'virtual_ride', 'indoor_biking', 'bike', 'biking', 'e_bike_ride', 'e_mountain_bike_ride',
-        'commute_cycling', 'touring_cycling', 'recumbent_cycling', 'cyclocross', 'road_biking',
-        'gravel_biking', 'tandem_cycling', 'bmx', 'fat_bike', 'track_cycling', 'spin_bike'
-    ]:
-        return 'cycling'
-    if type_key in ['swimming', 'pool_swimming', 'open_water_swimming', 'indoor_swimming', 'lap_swimming']:
-        return 'swimming'
-    if type_key in ['strength_training', 'weight_training', 'functional_strength_training', 'gym_strength_training', 'crossfit', 'hiit']:
-        return 'strength'
-    return 'other'
-
 def create_modality_analysis_tabs():
     try:
-        workouts = load_workouts()
+        workouts = enrich_workouts_with_tss(load_workouts())
         config = load_config()
         
         if not workouts:
@@ -3362,7 +2468,7 @@ def create_tss_heatmap(workouts):
         return fig
 
 def render_calendar():
-    workouts = load_workouts()
+    workouts = enrich_workouts_with_tss(load_workouts())
     config = load_config()
     
     if not workouts:
@@ -3747,7 +2853,7 @@ def render_calendar():
     ])
 
 def render_goals():
-    workouts = load_workouts()
+    workouts = enrich_workouts_with_tss(load_workouts())
     config = load_config()
     goals_progress = calculate_goals_progress(workouts, config)
     
@@ -4145,244 +3251,6 @@ def render_ai_chat():
         ])
 
 # Funções auxiliares
-def load_metrics():
-    """Carrega métricas de fitness do armazenamento local"""
-    if METRICS_FILE.exists():
-        with open(METRICS_FILE, "r") as f:
-            return json.load(f)
-    return []
-
-def load_config():
-    """Carrega configurações de fitness do armazenamento local"""
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
-    return {
-        "age": 29,
-        "ftp": 250,
-        "pace_threshold": "4:22",
-        "swim_pace_threshold": "2:01",
-        "hr_rest": 50,
-        "hr_max": 191,
-        "hr_threshold": 162,
-        "weekly_distance_goal": 50.0,
-        "weekly_tss_goal": 300,
-        "weekly_hours_goal": 7.0,
-        "weekly_activities_goal": 5,
-        "monthly_distance_goal": 200.0,
-        "monthly_tss_goal": 1200,
-        "monthly_hours_goal": 30.0,
-        "monthly_activities_goal": 20,
-        "target_ctl": 50,
-        "target_atl_max": 80,
-    }
-
-def save_config(config):
-    """Salva configurações de fitness no armazenamento local"""
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=4)
-
-def load_credentials():
-    """Carrega credenciais do Garmin do armazenamento local"""
-    if CREDENTIALS_FILE.exists():
-        with open(CREDENTIALS_FILE, "r") as f:
-            return json.load(f)
-    return {"email": "", "password": ""}
-
-def save_credentials(email, password):
-    """Salva credenciais do Garmin no armazenamento local (apenas no device)"""
-    with open(CREDENTIALS_FILE, "w") as f:
-        json.dump({"email": email, "password": password}, f, indent=4)
-    try:
-        os.chmod(CREDENTIALS_FILE, 0o600)
-    except:
-        pass
-
-def load_garmin_tokens():
-    """Carrega tokens do Garmin do arquivo garmin_tokens.json"""
-    token_dir = Path("garmin_tokens.json")
-    try:
-        if token_dir.exists() and token_dir.is_dir():
-            oauth1_path = token_dir / "oauth1_token.json"
-            oauth2_path = token_dir / "oauth2_token.json"
-            
-            oauth1_token = None
-            oauth2_token = None
-            
-            if oauth1_path.exists():
-                with open(oauth1_path, "r") as f:
-                    oauth1_token = json.load(f)
-            
-            if oauth2_path.exists():
-                with open(oauth2_path, "r") as f:
-                    oauth2_token = json.load(f)
-            
-            if oauth1_token and oauth2_token:
-                return {"oauth1": oauth1_token, "oauth2": oauth2_token}
-    except Exception as e:
-        print(f"Erro ao carregar tokens: {e}")
-    
-    return None
-
-def validate_garmin_tokens_locally():
-    """Valida tokens localmente sem conectar ao servidor (útil para PythonAnywhere)"""
-    try:
-        token_dir = Path("garmin_tokens.json")
-        if not token_dir.exists() or not token_dir.is_dir():
-            return False
-            
-        oauth1_path = token_dir / "oauth1_token.json"
-        oauth2_path = token_dir / "oauth2_token.json"
-        
-        if not oauth1_path.exists() or not oauth2_path.exists():
-            return False
-            
-        # Carregar e validar estrutura básica dos tokens
-        with open(oauth1_path, "r") as f:
-            oauth1 = json.load(f)
-            
-        with open(oauth2_path, "r") as f:
-            oauth2 = json.load(f)
-            
-        # Verificar se OAuth1 tem campos obrigatórios
-        if not all(key in oauth1 for key in ["oauth_token", "oauth_token_secret"]):
-            return False
-            
-        # Verificar se OAuth2 tem campos obrigatórios e não expirou
-        required_oauth2 = ["access_token", "token_type", "expires_in", "refresh_token"]
-        if not all(key in oauth2 for key in required_oauth2):
-            return False
-            
-        # Verificar expiração (com margem de segurança de 1 hora)
-        from datetime import datetime, timedelta
-        expires_at = datetime.fromisoformat(oauth2.get("expires_at", "2000-01-01T00:00:00"))
-        if datetime.now() + timedelta(hours=1) > expires_at:
-            print("⚠️ Tokens OAuth2 expirados ou próximos da expiração")
-            return False
-            
-        return True
-        
-    except Exception as e:
-        print(f"Erro ao validar tokens localmente: {e}")
-        return False
-
-def save_garmin_tokens(garmin_client):
-    """Salva tokens do Garmin após autenticação bem-sucedida"""
-    try:
-        token_dir = Path("garmin_tokens.json")
-        token_dir.mkdir(exist_ok=True)
-        
-        # Dumpar tokens do cliente garmin
-        garmin_client.garth.dump(str(token_dir))
-        return True
-    except Exception as e:
-        print(f"Erro ao salvar tokens: {e}")
-        return False
-
-def save_metrics(metrics):
-    """Salva métricas de fitness no armazenamento local"""
-    with open(METRICS_FILE, "w") as f:
-        json.dump(metrics, f, indent=4)
-
-def load_workouts():
-    """Carrega lista de workouts do armazenamento local"""
-    if WORKOUTS_FILE.exists():
-        with open(WORKOUTS_FILE, "r") as f:
-            return json.load(f)
-    return []
-
-def save_workouts(workouts):
-    """Salva lista de workouts no armazenamento local"""
-    with open(WORKOUTS_FILE, "w") as f:
-        json.dump(workouts, f, indent=4)
-
-def calculate_trimp(activity, config):
-    """Calcula TRIMP (Training Impulse) para uma atividade"""
-    category = _activity_category(activity)
-
-    duration_sec = float(activity.get('duration', 0) or 0)
-    if duration_sec <= 0:
-        return 0.0
-    duration_min = duration_sec / 60.0
-    duration_h = duration_sec / 3600.0
-
-    hr_rest = float(config.get('hr_rest', 50) or 50)
-    hr_max = float(config.get('hr_max', 191) or 191)
-
-    def _avg_hr_value(a: dict) -> float:
-        v = (a.get('averageHR') or a.get('avgHR') or a.get('avgHr') or a.get('averageHeartRate') or a.get('avgHeartRate'))
-        return float(v or 0)
-
-    def _hr_trimp(avg_hr: float) -> float:
-        if avg_hr <= 0 or hr_max <= hr_rest:
-            return 0.0
-        hr_reserve = (avg_hr - hr_rest) / (hr_max - hr_rest)
-        hr_reserve = max(0.0, min(2.0, float(hr_reserve)))
-        trimp_raw = float(duration_min * hr_reserve * 0.64 * math.exp(1.92 * hr_reserve))
-        return trimp_raw / 2.5
-
-    avg_hr = _avg_hr_value(activity)
-
-    if category == 'cycling':
-        ftp = float(config.get('ftp', 0) or 0)
-        np_power = activity.get('normalizedPower') or activity.get('normPower')
-        avg_power = activity.get('averagePower') or activity.get('avgPower')
-        power = float(np_power or avg_power or 0)
-        if ftp > 0 and power > 0:
-            if_ = power / ftp
-            trimp = duration_h * (if_ ** 2) * 100.0
-        else:
-            trimp = _hr_trimp(avg_hr)
-    elif category == 'running':
-        if avg_hr > 0:
-            trimp = _hr_trimp(avg_hr)
-        else:
-            avg_speed = float(activity.get('averageSpeed', 0) or 0)
-            if avg_speed > 0:
-                pace_s_km = 1000.0 / avg_speed
-                threshold_sec = _parse_mmss_to_seconds(config.get('pace_threshold', '5:00'), default_seconds=300)
-                intensity = float(threshold_sec) / float(pace_s_km)
-                trimp = duration_h * (intensity ** 2) * 100.0
-            else:
-                trimp = 0.0
-    elif category == 'swimming':
-        if avg_hr > 0:
-            if avg_hr <= 0 or hr_max <= hr_rest:
-                trimp = 0.0
-            else:
-                hr_reserve = (avg_hr - hr_rest) / (hr_max - hr_rest)
-                hr_reserve = max(0.0, min(2.0, float(hr_reserve)))
-                trimp_raw = float(duration_min * hr_reserve * 0.64 * math.exp(1.92 * hr_reserve))
-                trimp = trimp_raw / 9.0
-        else:
-            distance_m = float(activity.get('distance', 0) or 0)
-            if distance_m > 0:
-                pace_sec_100m = (duration_sec / distance_m) * 100.0
-                threshold_sec = _parse_mmss_to_seconds(config.get('swim_pace_threshold', '2:30'), default_seconds=150)
-                intensity = float(threshold_sec) / float(pace_sec_100m)
-                trimp = (duration_h * (intensity ** 2) * 100.0) / 3.5
-            else:
-                trimp = duration_h * 22.0
-    else:
-        trimp = _hr_trimp(avg_hr)
-    
-    return trimp
-
-def _parse_mmss_to_seconds(value: str, default_seconds: int) -> int:
-    try:
-        if not value:
-            return default_seconds
-        parts = str(value).strip().split(':')
-        if len(parts) != 2:
-            return default_seconds
-        mm = int(parts[0])
-        ss = int(parts[1])
-        if mm < 0 or ss < 0 or ss >= 60:
-            return default_seconds
-        return mm * 60 + ss
-    except Exception:
-        return default_seconds
-
 def calculate_goals_progress(activities, config):
     """Calcula progresso das metas baseado nas atividades"""
     if not activities:
@@ -4542,23 +3410,13 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
         # Converter de volta para lista
         all_activities = list(activities_dict.values())
 
-        # Enriquecer atividades com TSS variants (sempre recalcular)
-        enriched_activities = []
-        for a in all_activities:
-            a2 = dict(a)
-            tss_data = compute_tss_variants(a2, config)
-            # SEMPRE recalcular para garantir que usa a config mais recente
-            for k, v in tss_data.items():
-                a2[k] = v
-            enriched_activities.append(a2)
-
-        # Salvar TODAS as atividades (não filtrar por 42 dias aqui)
-        save_workouts(enriched_activities)
+        # Salvar as atividades brutas do Garmin (TSS é calculado dinamicamente nas views)
+        save_workouts(all_activities)
 
         # Para métricas do Dashboard, usar apenas os últimos 42 dias
         dashboard_cutoff = end_date - timedelta(days=42)
         dashboard_activities = []
-        for a in enriched_activities:
+        for a in all_activities:
             start_time = a.get('startTimeLocal', a.get('startTime', ''))
             if start_time:
                 try:
@@ -4573,12 +3431,21 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
                     # Se não conseguir parsear, incluir na dúvida
                     dashboard_activities.append(a)
 
+        dashboard_with_tss = []
+        
+        for a in dashboard_activities:
+            a_copy = dict(a)
+            tss_data = compute_tss_variants(a_copy, config)
+            a_copy['tss'] = tss_data.get('tss', 0.0)
+            
+            dashboard_with_tss.append(a_copy)
+
         # Calcular métricas apenas com dados dos últimos 42 dias
-        metrics = calculate_fitness_metrics(dashboard_activities, config, dashboard_cutoff, end_date)
+        metrics = calculate_fitness_metrics(dashboard_with_tss, config, dashboard_cutoff, end_date)
         save_metrics(metrics)
 
         new_count = len(new_activities)
-        total_count = len(enriched_activities)
+        total_count = len(all_activities)
         dashboard_count = len(dashboard_activities)
 
         return True, f"✅ Dados atualizados! {new_count} novas atividades, {total_count} total armazenadas, {dashboard_count} para Dashboard (42 dias)."
@@ -4589,86 +3456,61 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
         return False, f"❌ Erro ao buscar dados: {str(e)}"
 
 def compute_tss_variants(activity: dict, config: dict) -> dict:
-    """Calcula TSS (power), rTSS (pace), sTSS (swim pace) e hrTSS (HR) quando possível.
-
-    Observação: são aproximações consistentes com o modelo $TSS \\approx horas \\cdot IF^2 \\cdot 100$.
+    """Calcula TSS usando a função correta do calculations.py
+    
+    Delega para calculations.compute_tss_variants que implementa:
+    - TSS (power-based) para ciclismo
+    - rTSS (pace-based) para corrida
+    - hrTSS (heart rate-based) para natação e força
     """
-    duration_sec = float(activity.get('duration', 0) or 0)
-    if duration_sec <= 0:
-        return {'tss': 0.0, 'category': _activity_category(activity)}
-
-    duration_h = duration_sec / 3600.0
-    category = _activity_category(activity)
-
-    # Calcular TRIMP primeiro
-    trimp = calculate_trimp(activity, config)
-
-    # Para atividades com dados de potência (ciclismo principalmente)
-    if category == 'cycling':
-        ftp = float(config.get('ftp', 0) or 0)
-        np_power = activity.get('normalizedPower') or activity.get('normPower')
-        avg_power = activity.get('averagePower') or activity.get('avgPower')
-        power = float(np_power or avg_power or 0)
-
-        if ftp > 0 and power > 0:
-            if_ = power / ftp
-            tss = duration_h * (if_ ** 2) * 100.0
-        else:
-            # Fallback para TRIMP se não houver dados de potência
-            tss = trimp
-
-    # Para corrida
-    elif category == 'running':
-        avg_speed = float(activity.get('averageSpeed', 0) or 0)
-        if avg_speed > 0:
-            pace_s_km = 1000.0 / avg_speed
-            threshold_sec = _parse_mmss_to_seconds(config.get('pace_threshold', '5:00'), default_seconds=300)
-            if threshold_sec > 0 and pace_s_km > 0:
-                intensity = float(threshold_sec) / float(pace_s_km)
-                tss = duration_h * (intensity ** 2) * 100.0
-            else:
-                tss = trimp
-        else:
-            tss = trimp
-
-    # Para natação
-    elif category == 'swimming':
-        distance_m = float(activity.get('distance', 0) or 0)
-        if distance_m > 0:
-            pace_sec_100m = (duration_sec / distance_m) * 100.0
-            threshold_sec = _parse_mmss_to_seconds(config.get('swim_pace_threshold', '2:30'), default_seconds=150)
-            if threshold_sec > 0 and pace_sec_100m > 0:
-                intensity = float(threshold_sec) / float(pace_sec_100m)
-                tss = (duration_h * (intensity ** 2) * 100.0) / 3.5
-            else:
-                tss = trimp
-        else:
-            tss = trimp
-
-    # Para outras atividades (força, etc.)
-    else:
-        tss = trimp
-
-    return {'tss': tss, 'category': category}
+    from calculations import compute_tss_variants as calc_tss
+    
+    # Chamar função correta do calculations.py passando activity e config
+    result = calc_tss(activity, config)
+    
+    # A função do calculations.py retorna: {'tss': float, 'tss_type': str, 'category': str, 'breakdown': dict}
+    # Manter compatibilidade retornando tss e category
+    return {
+        'tss': result.get('tss', 0.0),
+        'category': result.get('category', _activity_category(activity))
+    }
 
 def calculate_fitness_metrics(activities, config, start_date, end_date):
-    """Calcula métricas de fitness (CTL, ATL, TSB) baseadas nas atividades"""
-    # Agrupar TRIMP por data
+    """Calcula métricas de fitness (CTL, ATL, TSB) baseadas em TSS diário.
+
+    Isso garante que Dashboard e Calendário usem a mesma base (TSS dinâmico)
+    e evita depender de arquivos com métricas antigas.
+    """
+    # Agrupar TSS por data
     daily_loads = {}
     for activity in activities:
-        start_time = activity.get('startTimeLocal', '')
-        if start_time:
+        start_time = activity.get('startTimeLocal') or activity.get('startTime') or ''
+        if not start_time:
+            continue
+
+        try:
+            # startTimeLocal pode ser "YYYY-MM-DD HH:MM:SS" ou ISO
+            if 'T' not in start_time:
+                start_time = start_time.replace(' ', 'T')
+            if not start_time.endswith('Z') and '+' not in start_time:
+                start_time += 'Z'
+            date = datetime.fromisoformat(start_time.replace('Z', '+00:00')).date()
+        except Exception:
+            continue
+
+        # Usar TSS (se já estiver enriquecido); se não, calcular agora.
+        try:
+            tss_val = float(activity.get('tss') or 0)
+        except Exception:
+            tss_val = 0.0
+
+        if tss_val <= 0:
             try:
-                # startTimeLocal pode ser "2025-12-21 11:43:55" ou com Z
-                if 'T' not in start_time:
-                    start_time = start_time.replace(' ', 'T')
-                if not start_time.endswith('Z'):
-                    start_time += 'Z'
-                date = datetime.fromisoformat(start_time.replace('Z', '+00:00')).date()
-                trimp = calculate_trimp(activity, config)
-                daily_loads[date] = daily_loads.get(date, 0) + trimp
-            except ValueError as e:
-                continue
+                tss_val = float(compute_tss_variants(dict(activity), config).get('tss', 0.0) or 0.0)
+            except Exception:
+                tss_val = 0.0
+
+        daily_loads[date] = daily_loads.get(date, 0.0) + tss_val
     
     # Lista de dias
     days = []
@@ -4683,13 +3525,13 @@ def calculate_fitness_metrics(activities, config, start_date, end_date):
     atl = 0.0
     
     for day in days:
-        daily_trimp = daily_loads.get(day, 0.0)
+        daily_tss = daily_loads.get(day, 0.0)
         
         # CTL (Chronic Training Load) - tempo de meia-vida de 42 dias
-        ctl = ctl + (daily_trimp - ctl) / 42.0
+        ctl = ctl + (daily_tss - ctl) / 42.0
         
         # ATL (Acute Training Load) - tempo de meia-vida de 7 dias
-        atl = atl + (daily_trimp - atl) / 7.0
+        atl = atl + (daily_tss - atl) / 7.0
         
         # TSB (Training Stress Balance) = CTL - ATL
         tsb = ctl - atl
@@ -4699,7 +3541,7 @@ def calculate_fitness_metrics(activities, config, start_date, end_date):
             'ctl': round(ctl, 1),
             'atl': round(atl, 1),
             'tsb': round(tsb, 1),
-            'daily_load': round(daily_trimp, 1)
+            'daily_load': round(daily_tss, 1)
         })
     
     return metrics
@@ -5008,7 +3850,7 @@ def handle_chat_message(send_clicks, s1, s2, s3, s4, s5, s6, input_value, curren
         
         # Carregar dados
         metrics = load_metrics()
-        workouts = load_workouts()
+        workouts = enrich_workouts_with_tss(load_workouts())
         config = load_config()
         
         # Gerar resposta da IA

@@ -155,18 +155,7 @@ Se você já tem um arquivo `garmin_tokens.json`:
 
 #### **Gerar Novos Tokens via Linha de Comando**
 
-Se os tokens expirarem, você pode regenerá-los:
-
-```bash
-# Configure as variáveis de ambiente
-export GARMIN_EMAIL=seu@email.com
-export GARMIN_PASSWORD=sua_senha
-
-# Execute o script
-python garmin.py
-```
-
-Ou clique em "🔄 Atualizar Tokens" na página de configuração do app.
+Se os tokens expirarem, você pode regenerá-los clicando em "🔄 Atualizar Tokens" na página de configuração do app.
 
 ### Prioridade de Autenticação
 
