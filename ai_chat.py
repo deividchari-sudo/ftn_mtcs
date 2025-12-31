@@ -84,8 +84,9 @@ RESPOSTA PROFISSIONAL:
             total_distance = sum(float(w.get('distance', 0) or 0) for w in workouts) if workouts else 0
 
             # Metas específicas para triathlon
-            ctl_target = config.get('ctl_target', 60)  # Meta mais alta para triathlon
-            atl_max = config.get('atl_max', 100)   # Limite mais alto para triathlon
+            # Compatibilidade: versões antigas podem usar ctl_target/atl_max
+            ctl_target = config.get('target_ctl') or config.get('ctl_target') or 60
+            atl_max = config.get('target_atl_max') or config.get('atl_max') or 100
 
             # Calcular proporção de treinamento por modalidade
             swim_pct = modality_stats['swimming']['percentage']

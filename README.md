@@ -37,6 +37,11 @@ Este aplicativo Dash permite que atletas monitorem seu estado de forma física a
    pip install -r requirements.txt
    ```
 
+   Para desenvolvimento (testes/lint/format):
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
+
 3. **Execute o aplicativo**
    ```bash
    python app.py
@@ -240,20 +245,20 @@ git push heroku main
 
 - **Armazenamento Local**: Todas as credenciais e dados são armazenados apenas no seu dispositivo
 - **Sem Servidores Externos**: Não há transmissão de dados para servidores externos
-- **Criptografia**: Credenciais são criptografadas localmente
+- **Permissões de Arquivo**: O app tenta restringir permissões dos arquivos localmente (quando suportado pelo SO)
 - **Controle Total**: Você pode deletar todos os dados a qualquer momento
 
 ## 📋 Dependências
 
 ```
-streamlit>=1.28.0
-garminconnect>=0.2.30
-pandas>=2.0.0
+dash>=2.14.0
+dash-bootstrap-components>=1.5.0
 plotly>=5.14.0
-groq>=0.37.1
-langchain>=1.2.0
-langchain-groq>=1.1.1
-python-dotenv>=1.1.1
+pandas>=2.0.0
+numpy>=2.3.0
+garminconnect>=0.2.30
+langchain-groq>=0.1.0
+python-dotenv>=1.0.0
 ```
 
 ## 🛠️ Desenvolvimento
@@ -262,11 +267,13 @@ python-dotenv>=1.1.1
 
 ```
 fitness-metrics/
-├── app.py                 # Aplicação principal Streamlit
+├── app.py                 # Aplicação principal Dash
 ├── requirements.txt       # Dependências Python
-├── user_config.json       # Configurações do usuário
-├── utils.py              # Utilitários e funções auxiliares
-├── fitness_metrics_flutter/  # Versão mobile (Flutter)
+├── details_page.py        # Aba "Mais Detalhes"
+├── calculations.py        # Cálculos de TSS/CTL/ATL/TSB
+├── storage.py             # Persistência local (arquivos)
+├── garmin.py              # Integração Garmin Connect
+├── utils.py               # Utilitários e funções auxiliares
 └── README.md             # Este arquivo
 ```
 
@@ -294,9 +301,8 @@ Este projeto está sob a licença MIT. Veja o arquivo LICENSE para mais detalhes
 
 - Garmin Connect API pela integração de dados
 - Comunidade de treinamento por compartilhar conhecimento sobre métricas de fitness
-- Streamlit pela plataforma de desenvolvimento
+- Dash pela plataforma de desenvolvimento
 
 ---
 
-**💡 Dica**: Para melhores resultados, mantenha suas configurações de fitness atualizadas e sincronize regularmente com o Garmin Connect.</content>
-<parameter name="filePath">c:\Users\deivi\Developer\README.md
+**💡 Dica**: Para melhores resultados, mantenha suas configurações de fitness atualizadas e sincronize regularmente com o Garmin Connect.

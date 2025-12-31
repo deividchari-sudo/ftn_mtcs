@@ -3,7 +3,6 @@ details_page.py - Página de Mais Detalhes
 Contém funções para renderizar seções que não agregam ao dashboard principal:
 - Alertas Inteligentes
 - Recordes Pessoais
-- Análise de Treinamento
 - Conquistas Desbloqueadas
 - Exportar Dados
 - Referências
@@ -15,101 +14,86 @@ from dash import html, dcc
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 
-# Importações lazy para evitar circular import
-# As funções serão importadas dentro de render_details()
 
-
-def create_records_section(metrics, workouts):
+def create_records_section(metrics, workouts, calculate_personal_records):
     """Renderiza seção de Recordes Pessoais"""
-    # Import lazy
-    from app import calculate_personal_records
-    
+    records = calculate_personal_records(metrics, workouts) if workouts else None
+
+    def _format_value(value, unit: str) -> str:
+        try:
+            value = float(value)
+        except Exception:
+            return str(value)
+        if unit in ["pts", "h"]:
+            return f"{value:.2f}"
+        if unit in ["TSS"]:
+            return f"{value:.0f}"
+        return f"{value:.1f}"
+
+    header = dbc.Row([
+        dbc.Col([
+            html.Div([
+                html.H3("🏆 Recordes Pessoais", className="mb-3 text-warning", style={"fontWeight": "700"}),
+                html.P("Seus melhores resultados e conquistas", className="text-muted mb-4", style={"fontSize": "0.95rem"}),
+            ], className="text-center")
+        ])
+    ])
+
+    if not workouts or not records:
+        body = dbc.Alert([
+            html.H5("🏆 Sem Recordes Ainda", className="alert-heading mb-2"),
+            html.P("Continue treinando para estabelecer seus recordes pessoais!", className="mb-0"),
+        ], color="light", className="shadow-sm", style={"borderRadius": "12px"})
+    else:
+        cards = []
+        for record in records.values():
+            unit = record.get("unit", "")
+            value = record.get("value", 0)
+            cards.append(
+                dbc.Col(
+                    dbc.Card(
+                        dbc.CardBody(
+                            html.Div([
+                                html.Div(record.get("icon", "🏆"), style={"fontSize": "2.5rem"}, className="mb-2"),
+                                html.H6(record.get("label", ""), className="text-muted mb-2", style={"fontSize": "0.8rem", "fontWeight": "600"}),
+                                html.H3([
+                                    _format_value(value, unit),
+                                    html.Small(f" {unit}", className="text-muted", style={"fontSize": "0.6em"}),
+                                ], className="mb-2", style={"fontWeight": "800"}),
+                                html.Div([
+                                    html.Small(f"📅 {record.get('date', 'N/A')}", className="text-muted d-block", style={"fontSize": "0.75rem"}),
+                                    html.Small(record.get("activity", ""), className="text-primary d-block mt-1", style={"fontSize": "0.7rem", "fontWeight": "500"}) if record.get("activity") else None,
+                                ]),
+                            ], className="text-center")
+                        ),
+                        className="shadow-sm border-0 h-100",
+                        style={
+                            "borderRadius": "12px",
+                            "background": "linear-gradient(135deg, #fff 0%, #f8f9fa 100%)",
+                            "borderTop": "4px solid #ffc107",
+                        },
+                    ),
+                    xs=12,
+                    sm=6,
+                    md=4,
+                    lg=3,
+                    xl=2,
+                    className="mb-3",
+                )
+            )
+        body = dbc.Row(cards, justify="center", className="g-3")
+
     return [
+        header,
         dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("🏆 Recordes Pessoais", className="mb-3 text-warning", style={'fontWeight': '700'}),
-                    html.P("Seus melhores resultados e conquistas", className="text-muted mb-4", style={'fontSize': '0.95rem'})
-                ], className="text-center")
-            ])
-        ]),
-        
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    *([
-                        dbc.Row([
-                            *[dbc.Col([
-                                dbc.Card([
-                                    dbc.CardBody([
-                                        html.Div([
-                                            html.Div(record['icon'], style={'fontSize': '2.5rem'}, className="mb-2"),
-                                            html.H6(record['label'], className="text-muted mb-2", style={'fontSize': '0.8rem', 'fontWeight': '600'}),
-                                            html.H3([
-                                                f"{record['value']:.2f}" if record['unit'] in ['pts', 'h'] else f"{record['value']:.1f}",
-                                                html.Small(f" {record['unit']}", className="text-muted", style={'fontSize': '0.6em'})
-                                            ], className="mb-2", style={'fontWeight': '800'}),
-                                            html.Div([
-                                                html.Small(f"📅 {record['date']}", className="text-muted d-block", style={'fontSize': '0.75rem'}),
-                                                html.Small(record.get('activity', ''), className="text-primary d-block mt-1", style={'fontSize': '0.7rem', 'fontWeight': '500'}) if 'activity' in record else None
-                                            ])
-                                        ], className="text-center")
-                                    ])
-                                ], className="shadow-sm border-0 h-100", style={'borderRadius': '12px', 'background': 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)', 'borderTop': '4px solid #ffc107'})
-                            ], md=2) for record in calculate_personal_records(metrics, workouts).values()]
-                        ], className="mb-4") if calculate_personal_records(metrics, workouts) else None
-                    ] if workouts else [
-                        dbc.Alert([
-                            html.H5("🏆 Sem Recordes Ainda", className="alert-heading mb-2"),
-                            html.P("Continue treinando para estabelecer seus recordes pessoais!", className="mb-0")
-                        ], color="light", className="shadow-sm", style={'borderRadius': '12px'})
-                    ])
-                ])
-            ])
-        ], className="mb-5")
+            dbc.Col([body])
+        ], className="mb-5"),
     ]
 
 
-def create_training_section(workouts, config):
-    """Renderiza seção de Análise de Treinamento"""
-    from app import create_distribution_chart, create_modality_analysis_tabs
-    
-    return [
-        html.Hr(className="my-5", style={'border': '2px solid #e9ecef', 'borderRadius': '2px'}),
-        
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H1("🏋️ Treinamento", className="text-info mb-2", style={'fontWeight': '700'}),
-                    html.P("Análise detalhada de seus treinos e distribuição de modalidades", className="text-muted mb-4", style={'fontSize': '1.1rem'})
-                ], className="text-center py-3")
-            ])
-        ], className="bg-light rounded-3 mb-4"),
-        
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("📊 Distribuição Semanal", className="mb-3 text-info", style={'fontWeight': '700'}),
-                    dcc.Graph(figure=create_distribution_chart(), config={'displayModeBar': False})
-                ], className="shadow-sm p-4 border-0", style={'borderRadius': '12px', 'background': 'white'})
-            ])
-        ], className="mb-4"),
-        
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.H3("🎯 Análise por Modalidade", className="mb-3 text-info", style={'fontWeight': '700'}),
-                    create_modality_analysis_tabs()
-                ], className="shadow-sm p-4 border-0", style={'borderRadius': '12px', 'background': 'white'})
-            ])
-        ], className="mb-5")
-    ]
-
-
-def create_achievements_section(metrics, workouts):
+def create_achievements_section(metrics, workouts, calculate_achievements):
     """Renderiza seção de Conquistas Desbloqueadas"""
-    # Import lazy
-    from app import calculate_achievements
+    achievements = calculate_achievements(metrics, workouts) if workouts else None
     
     return [
         dbc.Row([
@@ -145,16 +129,13 @@ def create_achievements_section(metrics, workouts):
                     'background': 'linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%)' if achievement['unlocked'] else 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
                     'borderTop': f"4px solid {'#28a745' if achievement['unlocked'] else '#6c757d'}"
                 })
-            ], md=2, className="mb-3") for achievement in calculate_achievements(metrics, workouts)]
-        ], className="mb-5")
+            ], xs=12, sm=6, md=4, lg=3, xl=2, className="mb-3") for achievement in (achievements or [])]
+        ], justify="center", className="mb-5 g-3")
     ]
 
 
-def create_monthly_evolution_section(metrics, workouts):
+def create_monthly_evolution_section(metrics, workouts, create_monthly_trend_chart):
     """Renderiza seção de Evolução Mensal"""
-    # Import lazy
-    from app import create_monthly_trend_chart
-    
     return [
         dbc.Row([
             dbc.Col([
@@ -356,12 +337,6 @@ def create_learning_section():
 
 def create_export_section():
     """Renderiza seção de Exportar Dados"""
-    # Import lazy
-    from app import load_metrics, load_workouts
-    
-    metrics = load_metrics()
-    workouts = load_workouts()
-    
     return [
         dbc.Row([
             dbc.Col([
@@ -423,20 +398,20 @@ def create_export_section():
     ]
 
 
-def render_details():
+def render_details(
+    metrics,
+    workouts,
+    config,
+    *,
+    calculate_personal_records,
+    calculate_achievements,
+    create_monthly_trend_chart,
+):
     """Renderiza a página completa de Mais Detalhes"""
-    # Importações lazy para evitar circular import
-    from app import load_metrics, load_workouts, load_config
-    
-    metrics = load_metrics()
-    workouts = load_workouts()
-    config = load_config()
-    
-    if not metrics:
-        metrics = []
-    if not workouts:
-        workouts = []
-    
+    metrics = metrics or []
+    workouts = workouts or []
+    config = config or {}
+
     return dbc.Container([
         # Header
         dbc.Row([
@@ -449,16 +424,13 @@ def render_details():
         ], className="bg-light rounded-3 mb-5"),
         
         # Recordes Pessoais
-        *create_records_section(metrics, workouts),
-        
-        # Treinamento
-        *create_training_section(workouts, config),
+        *create_records_section(metrics, workouts, calculate_personal_records),
         
         # Conquistas
-        *create_achievements_section(metrics, workouts),
+        *create_achievements_section(metrics, workouts, calculate_achievements),
         
         # Evolução Mensal
-        *create_monthly_evolution_section(metrics, workouts),
+        *create_monthly_evolution_section(metrics, workouts, create_monthly_trend_chart),
         
         # Referências
         *create_references_section(),

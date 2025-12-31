@@ -158,4 +158,3 @@ dmypy.json
 # Garmin tokens
 .garminconnect
 garmin_tokens.json
-garmin.py

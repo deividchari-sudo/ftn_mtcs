@@ -22,6 +22,36 @@ CONFIG_FILE = DATA_DIR / "user_config.json"
 CREDENTIALS_FILE = DATA_DIR / "garmin_credentials.json"
 METRICS_FILE = DATA_DIR / "fitness_metrics.json"
 WORKOUTS_FILE = DATA_DIR / "workouts_42_dias.json"
+SYNC_FILE = DATA_DIR / "sync_state.json"
+
+
+def _try_secure_file(path: Path) -> None:
+    """Best-effort: restringe permissões do arquivo (quando suportado)."""
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+
+
+# === ESTADO DE SINCRONIZAÇÃO ===
+
+def load_sync_state() -> dict:
+    """Carrega estado de sincronização (ex.: última sync com Garmin)."""
+    if SYNC_FILE.exists():
+        try:
+            with open(SYNC_FILE, "r") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def save_sync_state(state: dict) -> None:
+    """Salva estado de sincronização."""
+    with open(SYNC_FILE, "w") as f:
+        json.dump(state or {}, f, indent=4)
+    _try_secure_file(SYNC_FILE)
 
 
 # === CONFIGURAÇÕES ===
@@ -56,6 +86,7 @@ def save_config(config: dict) -> None:
     """Salva configurações de fitness no armazenamento local"""
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=4)
+    _try_secure_file(CONFIG_FILE)
 
 
 # === CREDENCIAIS GARMIN ===
@@ -79,33 +110,6 @@ def save_credentials(email: str, password: str) -> None:
 
 
 # === TOKENS GARMIN (OAuth) ===
-
-def load_garmin_tokens() -> dict | None:
-    """Carrega tokens do Garmin do arquivo garmin_tokens.json"""
-    token_dir = Path("garmin_tokens.json")
-    try:
-        if token_dir.exists() and token_dir.is_dir():
-            oauth1_path = token_dir / "oauth1_token.json"
-            oauth2_path = token_dir / "oauth2_token.json"
-            
-            oauth1_token = None
-            oauth2_token = None
-            
-            if oauth1_path.exists():
-                with open(oauth1_path, "r") as f:
-                    oauth1_token = json.load(f)
-            
-            if oauth2_path.exists():
-                with open(oauth2_path, "r") as f:
-                    oauth2_token = json.load(f)
-            
-            if oauth1_token and oauth2_token:
-                return {"oauth1": oauth1_token, "oauth2": oauth2_token}
-    except Exception as e:
-        print(f"Erro ao carregar tokens: {e}")
-    
-    return None
-
 
 def validate_garmin_tokens_locally() -> bool:
     """Valida tokens localmente sem conectar ao servidor (útil para PythonAnywhere)"""
@@ -139,13 +143,11 @@ def validate_garmin_tokens_locally() -> bool:
         # Verificar expiração (com margem de segurança de 1 hora)
         expires_at = datetime.fromisoformat(oauth2.get("expires_at", "2000-01-01T00:00:00"))
         if datetime.now() + timedelta(hours=1) > expires_at:
-            print("⚠️ Tokens OAuth2 expirados ou próximos da expiração")
             return False
             
         return True
         
-    except Exception as e:
-        print(f"Erro ao validar tokens localmente: {e}")
+    except Exception:
         return False
 
 
@@ -159,7 +161,6 @@ def save_garmin_tokens(garmin_client) -> bool:
         garmin_client.garth.dump(str(token_dir))
         return True
     except Exception as e:
-        print(f"Erro ao salvar tokens: {e}")
         return False
 
 
@@ -177,6 +178,7 @@ def save_metrics(metrics: list) -> None:
     """Salva métricas de fitness no armazenamento local"""
     with open(METRICS_FILE, "w") as f:
         json.dump(metrics, f, indent=4)
+    _try_secure_file(METRICS_FILE)
 
 
 # === HISTÓRICO DE TREINOS ===
@@ -193,3 +195,4 @@ def save_workouts(workouts: list) -> None:
     """Salva lista de workouts no armazenamento local"""
     with open(WORKOUTS_FILE, "w") as f:
         json.dump(workouts, f, indent=4)
+    _try_secure_file(WORKOUTS_FILE)

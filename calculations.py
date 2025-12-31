@@ -621,7 +621,7 @@ def compute_tss_variants(activity: dict, config: dict) -> dict:
     else:
         if avg_hr > 0 and lthr > 0:
             # Força/Musculação usa fator específico
-            activity_type = 'strength_training' if category in ['strength_training', 'training'] else 'other'
+            activity_type = 'strength_training' if category == 'strength' else 'other'
             tss_value = calculate_hrtss(duration_sec, avg_hr, lthr, hr_max, hr_rest, activity_type=activity_type)
             tss_type = 'hrtss'
             breakdown['hrtss'] = {'value': tss_value, 'avg_hr': avg_hr, 'lthr': lthr}
@@ -691,28 +691,39 @@ def calculate_fitness_metrics(
     daily_tss = {}
     
     for activity in activities:
-        start_time = activity.get('startTimeLocal', '') or activity.get('startTimeGMT', '')
-        if not start_time:
-            continue
-        
+        start_time = (
+            activity.get('startTimeLocal')
+            or activity.get('startTime')
+            or activity.get('startTimeGMT')
+            or activity.get('startTimeUtc')
+            or ''
+        )
+        start_seconds = activity.get('startTimeInSeconds') or activity.get('startTimeInSecondsGMT')
+
         try:
-            # Normalizar formato de data
-            if 'T' not in start_time:
-                start_time = start_time.replace(' ', 'T')
-            if start_time.endswith('Z'):
-                date = datetime.fromisoformat(start_time.replace('Z', '+00:00')).date()
+            if start_time:
+                # Normalizar formato de data (aceita "YYYY-MM-DD HH:MM:SS" e ISO)
+                if 'T' not in start_time:
+                    start_time = start_time.replace(' ', 'T')
+                if start_time.endswith('Z'):
+                    date = datetime.fromisoformat(start_time.replace('Z', '+00:00')).date()
+                else:
+                    date = datetime.fromisoformat(start_time).date()
+            elif start_seconds:
+                date = datetime.utcfromtimestamp(float(start_seconds)).date()
             else:
-                # Tentar parsear direto
-                date = datetime.fromisoformat(start_time).date()
-            
-            # Calcular TSS da atividade
-            tss_result = compute_tss_variants(activity, config)
-            tss = tss_result.get('tss', 0)
-            
+                continue
+
+            # Reutilizar TSS pré-calculado (quando o app já enriqueceu dinamicamente)
+            tss = _safe_float(activity.get('tss', 0.0), 0.0)
+            if tss <= 0:
+                tss_result = compute_tss_variants(activity, config)
+                tss = _safe_float(tss_result.get('tss', 0.0), 0.0)
+
             # Acumular TSS do dia
             daily_tss[date] = daily_tss.get(date, 0) + tss
-            
-        except (ValueError, AttributeError):
+
+        except (ValueError, TypeError, AttributeError):
             continue
     
     # Gerar lista de dias
@@ -743,7 +754,9 @@ def calculate_fitness_metrics(
             'ctl': round(ctl, 1),
             'atl': round(atl, 1),
             'tsb': round(tsb, 1),
-            'daily_tss': round(tss_today, 1)
+            'daily_tss': round(tss_today, 1),
+            # Compatibilidade com versões antigas do app/UI
+            'daily_load': round(tss_today, 1)
         })
     
     return metrics

@@ -3,26 +3,21 @@ from dash import html, dcc, Input, Output, State
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import pandas as pd
-import json
-import os
 import numpy as np
-import math
 from datetime import datetime, timedelta
-from pathlib import Path
 import calendar
 
-from utils import *
+from utils import format_hours_decimal
 from ai_chat import FitnessAI
 from details_page import render_details
-from calculations import calculate_trimp, compute_tss_variants, calculate_fitness_metrics, _activity_category, _parse_mmss_to_seconds
+from calculations import compute_tss_variants, calculate_fitness_metrics, _activity_category
 from storage import (
-    DATA_DIR, CONFIG_FILE, CREDENTIALS_FILE, METRICS_FILE, WORKOUTS_FILE,
-    load_config, save_config,
+    METRICS_FILE, WORKOUTS_FILE, load_config, save_config,
     load_credentials, save_credentials,
-    load_garmin_tokens, validate_garmin_tokens_locally, save_garmin_tokens,
+    validate_garmin_tokens_locally, save_garmin_tokens,
     load_metrics, save_metrics,
-    load_workouts, save_workouts
+    load_workouts, save_workouts,
+    load_sync_state, save_sync_state
 )
 
 # Função para enriquecer workouts com TSS calculado dinamicamente
@@ -37,10 +32,7 @@ def enrich_workouts_with_tss(workouts, config=None):
         
         # Remover TSS antigo se existir
         if 'tss' in w_copy:
-            old_tss = w_copy['tss']
             del w_copy['tss']
-        else:
-            old_tss = None
         
         # Calcular TSS novo
         tss_result = compute_tss_variants(w_copy, config)
@@ -64,10 +56,38 @@ def format_hours_to_hms(hours):
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUX])
+app = dash.Dash(
+    __name__,
+    external_stylesheets=[dbc.themes.LUX],
+    suppress_callback_exceptions=True,
+)
 app.title = "Fitness Metrics Dashboard"
 # Expor WSGI server para provedores como Render/Gunicorn
 server = app.server
+
+
+_MONTHS_PT_BR = [
+    "",
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+]
+
+
+def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
+    month_index = (year * 12 + (month - 1)) + delta
+    new_year = month_index // 12
+    new_month = (month_index % 12) + 1
+    return new_year, new_month
 
 # Script JavaScript para funcionalidades extras
 app.index_string = '''
@@ -151,28 +171,6 @@ app.layout = html.Div(id='app-container', children=[
         className='dark-mode-toggle',
         n_clicks=0
     ),
-    
-    # Helper de atalhos (sempre visível)
-    html.Div([
-        html.Div([
-            "💡 ",
-            html.Kbd("Ctrl+D"),
-            " Modo Escuro | ",
-            html.Kbd("Ctrl+K"),
-            " Atalhos"
-        ], style={
-            'position': 'fixed',
-            'bottom': '20px',
-            'left': '20px',
-            'zIndex': '9998',
-            'background': 'rgba(45, 45, 49, 0.9)',
-            'color': 'white',
-            'padding': '8px 16px',
-            'borderRadius': '8px',
-            'fontSize': '0.75rem',
-            'boxShadow': '0 4px 16px rgba(0,0,0,0.3)'
-        })
-    ]),
     
     dbc.Container([
     
@@ -272,7 +270,14 @@ def render_tab_content(active_tab):
     elif active_tab == "ai_chat":
         return render_ai_chat()
     elif active_tab == "details":
-        return render_details()
+        return render_details(
+            metrics=load_metrics() or [],
+            workouts=enrich_workouts_with_tss(load_workouts()) or [],
+            config=load_config() or {},
+            calculate_personal_records=calculate_personal_records,
+            calculate_achievements=calculate_achievements,
+            create_monthly_trend_chart=create_monthly_trend_chart,
+        )
     elif active_tab == "config":
         return render_config()
     return html.P("Selecione uma aba.")
@@ -301,7 +306,6 @@ def export_workouts_csv(n_clicks):
     """Exporta atividades para CSV"""
     if n_clicks:
         workouts = enrich_workouts_with_tss(load_workouts())
-        workouts = enrich_workouts_with_tss(workouts)  # Calcular TSS dinamicamente
         _, csv_data = export_to_csv([], workouts)
         if csv_data:
             return dict(content=csv_data, filename=f"workouts_{datetime.now().strftime('%Y%m%d')}.csv")
@@ -439,6 +443,19 @@ def calculate_smart_alerts(metrics):
 def calculate_personal_records(metrics, workouts):
     """Calcula recordes pessoais do atleta"""
     records = {}
+
+    def _parse_start_time(value: str):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+        try:
+            # Ex: 2025-12-31T06:15:00
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            return None
     
     # Maior CTL alcançado
     if metrics:
@@ -453,7 +470,25 @@ def calculate_personal_records(metrics, workouts):
     
     # Maior TSS em um dia
     if workouts:
-        max_tss_workout = max(workouts, key=lambda w: float(w.get('tss', 0) or 0))
+        workouts_with_tss = enrich_workouts_with_tss(workouts)
+
+        def _type_key(workout) -> str:
+            try:
+                return (workout.get("activityType", {}) or {}).get("typeKey", "") or ""
+            except Exception:
+                return ""
+
+        def _tri_bucket(type_key: str) -> str | None:
+            k = (type_key or "").lower()
+            if "run" in k or "running" in k or "corrida" in k:
+                return "run"
+            if "cycle" in k or "cycling" in k or "bike" in k or "biking" in k or "cicl" in k:
+                return "bike"
+            if "swim" in k or "swimming" in k or "natação" in k or "natacao" in k:
+                return "swim"
+            return None
+
+        max_tss_workout = max(workouts_with_tss, key=lambda w: float(w.get('tss', 0) or 0))
         records['max_tss'] = {
             'value': float(max_tss_workout.get('tss', 0) or 0),
             'date': max_tss_workout.get('startTimeLocal', 'N/A')[:10],
@@ -462,6 +497,28 @@ def calculate_personal_records(metrics, workouts):
             'unit': 'pts',
             'activity': max_tss_workout.get('activityName', 'N/A')[:30]
         }
+
+        # Novo 1: Maior TSS no dia (soma)
+        daily_tss = {}
+        for w in workouts_with_tss:
+            try:
+                start_time = w.get('startTimeLocal') or w.get('startTime') or ''
+                activity_dt = _parse_start_time(start_time)
+                if not activity_dt:
+                    continue
+                day_key = activity_dt.strftime('%Y-%m-%d')
+                daily_tss[day_key] = daily_tss.get(day_key, 0.0) + float(w.get('tss', 0) or 0)
+            except Exception:
+                pass
+        if daily_tss:
+            best_day, best_day_tss = max(daily_tss.items(), key=lambda kv: kv[1])
+            records['max_day_tss'] = {
+                'value': float(best_day_tss),
+                'date': best_day,
+                'icon': '📅',
+                'label': 'Maior TSS (Dia)',
+                'unit': 'pts'
+            }
         
         # Maior distância
         max_distance_workout = max(workouts, key=lambda w: float(w.get('distance', 0) or 0))
@@ -473,6 +530,53 @@ def calculate_personal_records(metrics, workouts):
             'unit': 'km',
             'activity': max_distance_workout.get('activityName', 'N/A')[:30]
         }
+
+        # Novo 2-4: Maior distância por modalidade (Tri)
+        best_by_bucket = {'run': None, 'bike': None, 'swim': None}
+        for w in workouts_with_tss:
+            try:
+                bucket = _tri_bucket(_type_key(w))
+                if bucket not in best_by_bucket:
+                    continue
+                dist_km = float(w.get('distance', 0) or 0) / 1000.0
+                if dist_km <= 0:
+                    continue
+                current_best = best_by_bucket[bucket]
+                if (current_best is None) or (dist_km > current_best[0]):
+                    best_by_bucket[bucket] = (dist_km, w)
+            except Exception:
+                pass
+
+        if best_by_bucket['run']:
+            dist_km, w = best_by_bucket['run']
+            records['max_run_distance'] = {
+                'value': dist_km,
+                'date': (w.get('startTimeLocal') or 'N/A')[:10],
+                'icon': '🏃',
+                'label': 'Maior Corrida',
+                'unit': 'km',
+                'activity': (w.get('activityName') or 'N/A')[:30]
+            }
+        if best_by_bucket['bike']:
+            dist_km, w = best_by_bucket['bike']
+            records['max_bike_distance'] = {
+                'value': dist_km,
+                'date': (w.get('startTimeLocal') or 'N/A')[:10],
+                'icon': '🚴',
+                'label': 'Maior Pedal',
+                'unit': 'km',
+                'activity': (w.get('activityName') or 'N/A')[:30]
+            }
+        if best_by_bucket['swim']:
+            dist_km, w = best_by_bucket['swim']
+            records['max_swim_distance'] = {
+                'value': dist_km,
+                'date': (w.get('startTimeLocal') or 'N/A')[:10],
+                'icon': '🏊',
+                'label': 'Maior Natação',
+                'unit': 'km',
+                'activity': (w.get('activityName') or 'N/A')[:30]
+            }
         
         # Maior duração
         max_duration_workout = max(workouts, key=lambda w: float(w.get('duration', 0) or 0))
@@ -484,17 +588,49 @@ def calculate_personal_records(metrics, workouts):
             'unit': 'h',
             'activity': max_duration_workout.get('activityName', 'N/A')[:30]
         }
+
+        # Novo 5: Melhor ritmo de corrida (min/km) — ignora distâncias muito curtas
+        best_pace = None  # (pace_min_per_km, workout)
+        for w in workouts_with_tss:
+            try:
+                if _tri_bucket(_type_key(w)) != 'run':
+                    continue
+                dist_km = float(w.get('distance', 0) or 0) / 1000.0
+                dur_s = float(w.get('duration', 0) or 0)
+                if dist_km < 2.0 or dur_s <= 0:
+                    continue
+                pace = (dur_s / 60.0) / dist_km
+                if pace <= 0:
+                    continue
+                if (best_pace is None) or (pace < best_pace[0]):
+                    best_pace = (pace, w)
+            except Exception:
+                pass
+        if best_pace:
+            pace, w = best_pace
+            records['best_run_pace'] = {
+                'value': pace,
+                'date': (w.get('startTimeLocal') or 'N/A')[:10],
+                'icon': '⚡',
+                'label': 'Melhor Ritmo',
+                'unit': 'min/km',
+                'activity': (w.get('activityName') or 'N/A')[:30]
+            }
     
     # Calcular maior semana (TSS)
     try:
         weekly_tss = {}
-        for workout in workouts:
-            start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
-            if not start_time:
+        weekly_hours = {}
+        for workout in workouts_with_tss:
+            start_time = workout.get('startTimeLocal') or workout.get('startTime') or ''
+            activity_date = _parse_start_time(start_time)
+            if not activity_date:
                 continue
-            activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
-            week_key = activity_date.strftime('%Y-W%U')
-            weekly_tss[week_key] = weekly_tss.get(week_key, 0) + float(workout.get('tss', 0) or 0)
+
+            iso_year, iso_week, _ = activity_date.isocalendar()
+            week_key = f"{iso_year}-W{iso_week:02d}"
+            weekly_tss[week_key] = weekly_tss.get(week_key, 0.0) + float(workout.get('tss', 0) or 0)
+            weekly_hours[week_key] = weekly_hours.get(week_key, 0.0) + (float(workout.get('duration', 0) or 0) / 3600.0)
         
         if weekly_tss:
             max_week = max(weekly_tss.items(), key=lambda x: x[1])
@@ -505,7 +641,43 @@ def calculate_personal_records(metrics, workouts):
                 'label': 'Maior Semana',
                 'unit': 'TSS'
             }
+
+        # Novo 6: Semana com mais horas
+        if weekly_hours:
+            max_week_h = max(weekly_hours.items(), key=lambda x: x[1])
+            records['max_week_hours'] = {
+                'value': max_week_h[1],
+                'date': max_week_h[0],
+                'icon': '🕒',
+                'label': 'Maior Semana (h)',
+                'unit': 'h'
+            }
     except:
+        pass
+
+    # Novo 7: Mês com maior TSS
+    try:
+        monthly_tss = {}
+        for w in workouts_with_tss:
+            try:
+                start_time = w.get('startTimeLocal') or w.get('startTime') or ''
+                dt = _parse_start_time(start_time)
+                if not dt:
+                    continue
+                month_key = dt.strftime('%Y-%m')
+                monthly_tss[month_key] = monthly_tss.get(month_key, 0.0) + float(w.get('tss', 0) or 0)
+            except Exception:
+                pass
+        if monthly_tss:
+            best_month, best_month_tss = max(monthly_tss.items(), key=lambda kv: kv[1])
+            records['max_month_tss'] = {
+                'value': float(best_month_tss),
+                'date': best_month,
+                'icon': '🗓️',
+                'label': 'Maior Mês (TSS)',
+                'unit': 'pts'
+            }
+    except Exception:
         pass
     
     return records
@@ -562,6 +734,46 @@ def calculate_period_comparison(metrics):
 def calculate_achievements(metrics, workouts):
     """Calcula conquistas gamificadas do usuário"""
     achievements = []
+
+    def _clamp_pct(value: float, target: float) -> int:
+        try:
+            if target <= 0:
+                return 0
+            return int(max(0, min(100, (float(value) / float(target)) * 100)))
+        except Exception:
+            return 0
+
+    def _parse_start_time(value: str):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            return None
+
+    def _type_key(workout) -> str:
+        try:
+            return (workout.get("activityType", {}) or {}).get("typeKey", "") or ""
+        except Exception:
+            return ""
+
+    def _modality_bucket(type_key: str) -> str:
+        key = (type_key or "").lower()
+        if "swim" in key or "natação" in key or "natacao" in key:
+            return "swim"
+        if "run" in key or "running" in key or "corrida" in key:
+            return "run"
+        if "cycle" in key or "cycling" in key or "bike" in key or "cicl" in key:
+            return "bike"
+        if "strength" in key or "gym" in key or "força" in key or "forca" in key:
+            return "strength"
+        return "other"
+
+    workouts = enrich_workouts_with_tss(workouts) if workouts else []
     
     # Conquista 1: Sequência de dias consecutivos
     if workouts:
@@ -569,9 +781,9 @@ def calculate_achievements(metrics, workouts):
         for workout in workouts:
             try:
                 start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
-                if start_time:
-                    activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").date()
-                    dates_with_workouts.add(activity_date)
+                activity_dt = _parse_start_time(start_time)
+                if activity_dt:
+                    dates_with_workouts.add(activity_dt.date())
             except:
                 pass
         
@@ -648,8 +860,8 @@ def calculate_achievements(metrics, workouts):
     if workouts:
         for workout in workouts:
             try:
-                activity_type = workout.get('activityType', {}).get('typeKey', '').lower()
-                if 'running' in activity_type or 'corrida' in activity_type:
+                activity_type = _type_key(workout).lower()
+                if 'running' in activity_type or 'corrida' in activity_type or 'run' in activity_type:
                     distance = float(workout.get('distance', 0) or 0) / 1000
                     max_running_distance = max(max_running_distance, distance)
             except:
@@ -681,9 +893,10 @@ def calculate_achievements(metrics, workouts):
         for workout in workouts:
             try:
                 start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
-                if start_time:
-                    activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
-                    week_key = activity_date.strftime('%Y-W%U')
+                activity_dt = _parse_start_time(start_time)
+                if activity_dt:
+                    iso_year, iso_week, _ = activity_dt.isocalendar()
+                    week_key = f"{iso_year}-W{iso_week:02d}"
                     weekly_count[week_key] = weekly_count.get(week_key, 0) + 1
             except:
                 pass
@@ -733,6 +946,189 @@ def calculate_achievements(metrics, workouts):
             'color': 'secondary',
             'progress': int(max_ctl / 60 * 100)
         })
+
+    # ---- Novas conquistas (10+) ----
+    total_workouts = len(workouts)
+    achievements.append({
+        'icon': '🧱',
+        'title': 'Base Construída',
+        'description': f'Complete 100 treinos no total ({total_workouts}/100)',
+        'unlocked': total_workouts >= 100,
+        'color': 'secondary',
+        'progress': _clamp_pct(total_workouts, 100)
+    })
+
+    # Longão (duração)
+    max_duration_hours = 0.0
+    for w in workouts:
+        try:
+            max_duration_hours = max(max_duration_hours, float(w.get('duration', 0) or 0) / 3600.0)
+        except Exception:
+            pass
+    achievements.append({
+        'icon': '🕒',
+        'title': 'Longão de Respeito',
+        'description': f'Faça um treino de 3h ({max_duration_hours:.1f}/3.0h)',
+        'unlocked': max_duration_hours >= 3.0,
+        'color': 'secondary',
+        'progress': _clamp_pct(max_duration_hours, 3.0)
+    })
+
+    # Century Ride
+    max_bike_km = 0.0
+    for w in workouts:
+        try:
+            if _modality_bucket(_type_key(w)) == 'bike':
+                max_bike_km = max(max_bike_km, float(w.get('distance', 0) or 0) / 1000.0)
+        except Exception:
+            pass
+    achievements.append({
+        'icon': '🚴',
+        'title': 'Century Ride',
+        'description': f'Pedale 100km em um treino ({max_bike_km:.1f}/100km)',
+        'unlocked': max_bike_km >= 100.0,
+        'color': 'secondary',
+        'progress': _clamp_pct(max_bike_km, 100.0)
+    })
+
+    # Natação 3.8km (quase Iron swim)
+    max_swim_km = 0.0
+    for w in workouts:
+        try:
+            if _modality_bucket(_type_key(w)) == 'swim':
+                max_swim_km = max(max_swim_km, float(w.get('distance', 0) or 0) / 1000.0)
+        except Exception:
+            pass
+    achievements.append({
+        'icon': '🏊',
+        'title': 'Quase Iron Swim',
+        'description': f'Nade 3,8km em um treino ({max_swim_km:.1f}/3,8km)',
+        'unlocked': max_swim_km >= 3.8,
+        'color': 'secondary',
+        'progress': _clamp_pct(max_swim_km, 3.8)
+    })
+
+    # Escalador (elevação)
+    max_elev_gain = 0.0
+    for w in workouts:
+        try:
+            elev = (
+                w.get('elevationGain')
+                or w.get('elevationGainMeters')
+                or w.get('totalElevationGain')
+                or 0
+            )
+            max_elev_gain = max(max_elev_gain, float(elev or 0))
+        except Exception:
+            pass
+    achievements.append({
+        'icon': '⛰️',
+        'title': 'Escalador',
+        'description': f'Ganhe 1500m de elevação em um treino ({max_elev_gain:.0f}/1500m)',
+        'unlocked': max_elev_gain >= 1500.0,
+        'color': 'secondary',
+        'progress': _clamp_pct(max_elev_gain, 1500.0)
+    })
+
+    # Consistência mensal (20+ treinos em um mês)
+    monthly_counts = {}
+    for w in workouts:
+        try:
+            dt = _parse_start_time(w.get('startTimeLocal') or w.get('startTime') or '')
+            if not dt:
+                continue
+            month_key = f"{dt.year:04d}-{dt.month:02d}"
+            monthly_counts[month_key] = monthly_counts.get(month_key, 0) + 1
+        except Exception:
+            pass
+    best_month_count = max(monthly_counts.values()) if monthly_counts else 0
+    achievements.append({
+        'icon': '🗓️',
+        'title': 'Consistência Mensal',
+        'description': f'Complete 20 treinos em um mês ({best_month_count}/20)',
+        'unlocked': best_month_count >= 20,
+        'color': 'secondary',
+        'progress': _clamp_pct(best_month_count, 20)
+    })
+
+    # Semana de Carga (TSS semanal >= 500)
+    weekly_tss = {}
+    for w in workouts:
+        try:
+            dt = _parse_start_time(w.get('startTimeLocal') or w.get('startTime') or '')
+            if not dt:
+                continue
+            iso_year, iso_week, _ = dt.isocalendar()
+            week_key = f"{iso_year}-W{iso_week:02d}"
+            weekly_tss[week_key] = weekly_tss.get(week_key, 0.0) + float(w.get('tss', 0) or 0)
+        except Exception:
+            pass
+    best_week_tss = max(weekly_tss.values()) if weekly_tss else 0.0
+    achievements.append({
+        'icon': '📈',
+        'title': 'Semana de Carga',
+        'description': f'Alcance 500 TSS em uma semana ({best_week_tss:.0f}/500)',
+        'unlocked': best_week_tss >= 500.0,
+        'color': 'secondary',
+        'progress': _clamp_pct(best_week_tss, 500.0)
+    })
+
+    # Multiesporte (3 modalidades em uma semana)
+    weekly_modalities = {}
+    for w in workouts:
+        try:
+            dt = _parse_start_time(w.get('startTimeLocal') or w.get('startTime') or '')
+            if not dt:
+                continue
+            iso_year, iso_week, _ = dt.isocalendar()
+            week_key = f"{iso_year}-W{iso_week:02d}"
+            weekly_modalities.setdefault(week_key, set()).add(_modality_bucket(_type_key(w)))
+        except Exception:
+            pass
+    best_week_variety = max((len(v) for v in weekly_modalities.values()), default=0)
+    achievements.append({
+        'icon': '🎭',
+        'title': 'Multiesporte',
+        'description': f'Faça 3 modalidades na mesma semana ({best_week_variety}/3)',
+        'unlocked': best_week_variety >= 3,
+        'color': 'secondary',
+        'progress': _clamp_pct(best_week_variety, 3)
+    })
+
+    # Madrugador (10 treinos antes das 06:00)
+    early_count = 0
+    for w in workouts:
+        try:
+            dt = _parse_start_time(w.get('startTimeLocal') or w.get('startTime') or '')
+            if dt and dt.hour < 6:
+                early_count += 1
+        except Exception:
+            pass
+    achievements.append({
+        'icon': '🌅',
+        'title': 'Madrugador',
+        'description': f'Faça 10 treinos antes das 06:00 ({early_count}/10)',
+        'unlocked': early_count >= 10,
+        'color': 'secondary',
+        'progress': _clamp_pct(early_count, 10)
+    })
+
+    # Sessões fortes (10 treinos com TSS >= 80)
+    hard_sessions = 0
+    for w in workouts:
+        try:
+            if float(w.get('tss', 0) or 0) >= 80.0:
+                hard_sessions += 1
+        except Exception:
+            pass
+    achievements.append({
+        'icon': '💥',
+        'title': 'Sessões Fortes',
+        'description': f'Complete 10 treinos com TSS ≥ 80 ({hard_sessions}/10)',
+        'unlocked': hard_sessions >= 10,
+        'color': 'secondary',
+        'progress': _clamp_pct(hard_sessions, 10)
+    })
     
     return achievements
 
@@ -880,83 +1276,121 @@ def export_to_csv(metrics, workouts):
 def create_monthly_trend_chart(metrics, workouts):
     """Cria gráfico de evolução mensal com barras por modalidade"""
     try:
-        from datetime import datetime as dt_parse
-        import calendar
-        
-        # Organizar dados por mês
+        from datetime import datetime as dt_parse, date as dt_date, timedelta
+
+        def _parse_start_time(value: str):
+            if not value:
+                return None
+            try:
+                return dt_parse.strptime(value, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                pass
+            try:
+                return dt_parse.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                return None
+
+        def _shift_month(year: int, month: int, delta: int):
+            total = (year * 12 + (month - 1)) + delta
+            new_year = total // 12
+            new_month = (total % 12) + 1
+            return new_year, new_month
+
+        def _month_key(year: int, month: int) -> str:
+            return f"{year:04d}-{month:02d}"
+
+        def _month_label(year: int, month: int) -> str:
+            return f"{month:02d}/{str(year)[2:]}"
+
+        def _type_key(workout) -> str:
+            try:
+                return (workout.get("activityType", {}) or {}).get("typeKey", "") or ""
+            except Exception:
+                return ""
+
+        def _bucket(type_key: str) -> str | None:
+            k = (type_key or "").lower()
+            if "run" in k or "running" in k or "corrida" in k:
+                return "running"
+            if "cycle" in k or "cycling" in k or "bike" in k or "biking" in k or "cicl" in k:
+                return "cycling"
+            if "swim" in k or "swimming" in k or "natação" in k or "natacao" in k:
+                return "swimming"
+            return None
+
+        workouts = enrich_workouts_with_tss(workouts) if workouts else []
+
+        today = dt_date.today()
+        end_date = today
+        # Primeiro dia do mês atual
+        start_month_year, start_month = _shift_month(today.year, today.month, -5)
+        start_date = dt_date(start_month_year, start_month, 1)
+
+        # Inicializar 6 meses fixos (inclusive mês atual)
         monthly_data = {}
-        
-        # Agrupar workouts por mês e modalidade
+        months_order = []
+        for i in range(6):
+            y, m = _shift_month(start_month_year, start_month, i)
+            key = _month_key(y, m)
+            months_order.append(key)
+            monthly_data[key] = {
+                'label': _month_label(y, m),
+                'running': 0.0,
+                'cycling': 0.0,
+                'swimming': 0.0,
+                'avg_ctl': 0.0,
+                'count_ctl': 0,
+            }
+
+        # Agregar TSS por mês (somente corrida/ciclismo/natação)
         for workout in workouts:
             try:
                 start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
-                if not start_time:
+                activity_dt = _parse_start_time(start_time)
+                if not activity_dt:
                     continue
-                
-                activity_date = dt_parse.strptime(start_time, "%Y-%m-%d %H:%M:%S")
-                month_key = activity_date.strftime('%Y-%m')
-                month_label = activity_date.strftime('%b/%y')
-                
-                if month_key not in monthly_data:
-                    monthly_data[month_key] = {
-                        'label': month_label,
-                        'running': 0,
-                        'cycling': 0,
-                        'swimming': 0,
-                        'strength': 0,
-                        'other': 0,
-                        'total_tss': 0,
-                        'avg_ctl': 0,
-                        'count_ctl': 0
-                    }
-                
-                # Categorizar atividade
-                activity_type = workout.get('activityType', {}).get('typeKey', '').lower()
+                activity_day = activity_dt.date()
+                if activity_day < start_date or activity_day > end_date:
+                    continue
+
+                bucket = _bucket(_type_key(workout))
+                if not bucket:
+                    continue
+
+                key = activity_dt.strftime('%Y-%m')
+                if key not in monthly_data:
+                    continue
+
                 tss = float(workout.get('tss', 0) or 0)
-                
-                if 'running' in activity_type:
-                    monthly_data[month_key]['running'] += tss
-                elif 'cycling' in activity_type or 'biking' in activity_type:
-                    monthly_data[month_key]['cycling'] += tss
-                elif 'swimming' in activity_type:
-                    monthly_data[month_key]['swimming'] += tss
-                elif 'strength' in activity_type or 'training' in activity_type:
-                    monthly_data[month_key]['strength'] += tss
-                else:
-                    monthly_data[month_key]['other'] += tss
-                
-                monthly_data[month_key]['total_tss'] += tss
-            except:
+                monthly_data[key][bucket] += tss
+            except Exception:
                 pass
-        
-        # Adicionar CTL médio por mês
-        for metric in metrics:
+
+        # CTL: recomputar para cobrir os 6 meses (metrics carregado costuma ser só 42 dias)
+        config = load_config()
+        warmup_start = start_date - timedelta(days=60)
+        ctl_metrics = calculate_fitness_metrics(workouts, config, warmup_start, end_date)
+
+        for metric in ctl_metrics:
             try:
-                month_key = metric['date'][:7]
-                if month_key in monthly_data:
-                    monthly_data[month_key]['avg_ctl'] += metric['ctl']
-                    monthly_data[month_key]['count_ctl'] += 1
-            except:
+                key = (metric.get('date') or '')[:7]
+                if key in monthly_data:
+                    monthly_data[key]['avg_ctl'] += float(metric.get('ctl', 0) or 0)
+                    monthly_data[key]['count_ctl'] += 1
+            except Exception:
                 pass
-        
-        # Calcular média de CTL
-        for month_key in monthly_data:
-            if monthly_data[month_key]['count_ctl'] > 0:
-                monthly_data[month_key]['avg_ctl'] /= monthly_data[month_key]['count_ctl']
-        
-        # Pegar últimos 6 meses
-        sorted_months = sorted(monthly_data.keys())[-6:]
-        
-        months_labels = [monthly_data[m]['label'] for m in sorted_months]
-        running_data = [monthly_data[m]['running'] for m in sorted_months]
-        cycling_data = [monthly_data[m]['cycling'] for m in sorted_months]
-        swimming_data = [monthly_data[m]['swimming'] for m in sorted_months]
-        strength_data = [monthly_data[m]['strength'] for m in sorted_months]
-        other_data = [monthly_data[m]['other'] for m in sorted_months]
-        ctl_data = [monthly_data[m]['avg_ctl'] for m in sorted_months]
+
+        for key in months_order:
+            if monthly_data[key]['count_ctl'] > 0:
+                monthly_data[key]['avg_ctl'] /= monthly_data[key]['count_ctl']
+
+        months_labels = [monthly_data[m]['label'] for m in months_order]
+        running_data = [monthly_data[m]['running'] for m in months_order]
+        cycling_data = [monthly_data[m]['cycling'] for m in months_order]
+        swimming_data = [monthly_data[m]['swimming'] for m in months_order]
+        ctl_data = [monthly_data[m]['avg_ctl'] for m in months_order]
         
         # Criar figura com eixo secundário
-        from plotly.subplots import make_subplots
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
         # Barras empilhadas de TSS por modalidade
@@ -970,14 +1404,6 @@ def create_monthly_trend_chart(metrics, workouts):
         )
         fig.add_trace(
             go.Bar(name='🏊 Natação', x=months_labels, y=swimming_data, marker_color='#007bff'),
-            secondary_y=False
-        )
-        fig.add_trace(
-            go.Bar(name='💪 Força', x=months_labels, y=strength_data, marker_color='#6f42c1'),
-            secondary_y=False
-        )
-        fig.add_trace(
-            go.Bar(name='⚽ Outros', x=months_labels, y=other_data, marker_color='#6c757d'),
             secondary_y=False
         )
         
@@ -996,7 +1422,7 @@ def create_monthly_trend_chart(metrics, workouts):
         )
         
         fig.update_layout(
-            title='Evolução Mensal - TSS por Modalidade e CTL',
+            title='Evolução Mensal - TSS (Tri) e CTL',
             barmode='stack',
             height=450,
             hovermode='x unified',
@@ -1415,7 +1841,6 @@ def create_metrics_chart(metrics):
             ma_dates = []
 
         # Criar figura com subplots usando Plotly
-        from plotly.subplots import make_subplots
         fig = make_subplots(
             rows=3, cols=1,
             subplot_titles=('Métricas de Performance - Análise Completa', 'Mudanças na Última Semana', 'Progresso Mensal (Médias)'),
@@ -2055,7 +2480,6 @@ def create_recent_activities_table():
                 
             except Exception as e:
                 # Continuar mesmo com erro, para garantir que exibimos todas as atividades possíveis
-                print(f"Erro ao processar atividade: {e}")
                 continue
         
         return dbc.Table([
@@ -2069,8 +2493,8 @@ def create_recent_activities_table():
                 ], style={'background': '#f8f9fa'})
             ]),
             html.Tbody(table_rows)
-        ], bordered=True, hover=True, responsive=True, size="sm", className="mb-0", 
-           style={'background': 'white'})
+          ], bordered=True, hover=True, responsive="sm", size="sm", className="mb-0", 
+              style={'background': 'white', 'width': '100%', 'tableLayout': 'fixed'})
         
     except Exception as e:
         return html.Div("Erro ao carregar atividades recentes.", className="text-danger")
@@ -2113,7 +2537,7 @@ def create_metrics_history_table(metrics):
                 ])
             ]),
             html.Tbody(table_rows)
-        ], striped=True, bordered=True, hover=True, responsive=True, size="sm", className="mb-0")
+        ], striped=True, bordered=True, hover=True, responsive="sm", size="sm", className="mb-0", style={'width': '100%', 'tableLayout': 'fixed'})
         
     except Exception as e:
         return html.Div("Erro ao carregar histórico de métricas.", className="text-danger")
@@ -2317,7 +2741,7 @@ def create_modality_analysis_tabs():
                                     ])
                                 ]),
                                 html.Tbody(table_rows)
-                            ], striped=True, bordered=True, hover=True, responsive=True, size="sm")
+                            ], striped=True, bordered=True, hover=True, responsive="sm", size="sm", style={'width': '100%', 'tableLayout': 'fixed'})
                         ])
                     ]),
                     
@@ -2366,8 +2790,14 @@ def create_tss_heatmap(workouts):
                 start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
                 if not start_time:
                     continue
-                
-                activity_date = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S").date()
+
+                # Aceitar formatos comuns do Garmin (YYYY-MM-DDTHH:MM:SS, YYYY-MM-DD HH:MM:SS, etc)
+                if 'T' in start_time:
+                    date_part = start_time.split('T', 1)[0]
+                else:
+                    date_part = start_time.split(' ', 1)[0]
+
+                activity_date = datetime.strptime(date_part, "%Y-%m-%d").date()
                 date_str = activity_date.strftime('%Y-%m-%d')
                 tss = float(workout.get('tss', 0) or 0)
                 daily_tss[date_str] = daily_tss.get(date_str, 0) + tss
@@ -2383,35 +2813,37 @@ def create_tss_heatmap(workouts):
             )
             return fig
         
-        # Últimos 90 dias
+        # Últimos 90 dias (alinhado em semanas seg-dom para não "deslocar" os dias)
         today = datetime.now().date()
-        dates = [(today - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(89, -1, -1)]
-        
-        # Organizar em semanas (13 semanas x 7 dias)
-        weeks = []
-        week_labels = []
-        for i in range(0, len(dates), 7):
-            week = dates[i:i+7]
-            if len(week) < 7:  # Preencher semana incompleta com zeros
-                week = week + [''] * (7 - len(week))
-            weeks.append([daily_tss.get(d, 0) if d else 0 for d in week])
-            if week[0]:
-                week_start = datetime.strptime(week[0], '%Y-%m-%d')
-                week_labels.append(week_start.strftime('%d/%m'))
-            else:
-                week_labels.append('')
-        
-        # Transpor para ter dias da semana nas linhas
-        if weeks:
-            days_data = list(map(list, zip(*weeks)))
-        else:
-            days_data = [[0] * 13 for _ in range(7)]
+
+        start_date = today - timedelta(days=89)
+        start_date = start_date - timedelta(days=start_date.weekday())
+        end_date = today + timedelta(days=(6 - today.weekday()))
+
+        week_starts = []
+        d = start_date
+        while d <= end_date:
+            week_starts.append(d)
+            d += timedelta(days=7)
+
+        week_labels = [ws.strftime('%d/%m') for ws in week_starts]
+        y_labels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+
+        z_rows = [[] for _ in range(7)]
+        date_rows = [[] for _ in range(7)]
+        for week_start in week_starts:
+            for dow in range(7):
+                cell_date = week_start + timedelta(days=dow)
+                cell_date_str = cell_date.strftime('%Y-%m-%d')
+                tss_value = daily_tss.get(cell_date_str, 0)
+                z_rows[dow].append(tss_value)
+                date_rows[dow].append(cell_date.strftime('%d/%m/%Y'))
         
         # Criar heatmap
         fig = go.Figure(data=go.Heatmap(
-            z=days_data,
+            z=z_rows,
             x=week_labels,
-            y=['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'],
+            y=y_labels,
             colorscale=[
                 [0, '#f8f9fa'],
                 [0.2, '#d1ecf1'],
@@ -2420,13 +2852,14 @@ def create_tss_heatmap(workouts):
                 [0.8, '#17a2b8'],
                 [1, '#138496']
             ],
+            customdata=date_rows,
             colorbar=dict(
                 title=dict(text='TSS', side='right'),
                 tickmode='linear',
                 tick0=0,
                 dtick=50
             ),
-            hovertemplate='<b>%{y}</b><br>Semana: %{x}<br>TSS: %{z:.0f}<extra></extra>',
+            hovertemplate='<b>%{customdata}</b><br>%{y}<br>TSS: %{z:.0f}<extra></extra>',
             showscale=True
         ))
         
@@ -2467,35 +2900,7 @@ def create_tss_heatmap(workouts):
         return fig
         return fig
 
-def render_calendar():
-    workouts = enrich_workouts_with_tss(load_workouts())
-    config = load_config()
-    
-    if not workouts:
-        return dbc.Container([
-            dbc.Row([
-                dbc.Col([
-                    html.Div([
-                        html.H1("📅 Calendário", className="text-primary mb-2", style={'fontWeight': '700'}),
-                        html.P("Visualize suas atividades dia a dia", className="text-muted mb-4", style={'fontSize': '1.1rem'})
-                    ], className="text-center py-3")
-                ])
-            ], className="bg-light rounded-3 mb-4"),
-            dbc.Row([
-                dbc.Col([
-                    dbc.Alert([
-                        html.H5("⚠️ Nenhum treino disponível", className="alert-heading"),
-                        html.P("Vá para 'Configuração' para sincronizar com Garmin Connect.")
-                    ], color="warning")
-                ])
-            ])
-        ])
-    
-    # Data atual
-    now = datetime.now()
-    current_month = now.month
-    current_year = now.year
-    
+def _render_calendar_month_section(workouts, year: int, month: int, today: datetime):
     # Organizar treinos por data
     workouts_by_date = {}
     monthly_stats = {
@@ -2505,33 +2910,29 @@ def render_calendar():
         'total_duration': 0,
         'by_category': {}
     }
-    
+
     for workout in workouts:
         try:
             start_time = workout.get('startTimeLocal', workout.get('startTime', ''))
             if not start_time:
                 continue
-                
-            # Parsear data
+
             if 'T' in start_time:
                 date_obj = datetime.strptime(start_time.split('T')[0], '%Y-%m-%d').date()
             else:
                 date_obj = datetime.strptime(start_time.split(' ')[0], '%Y-%m-%d').date()
-            
-            # Adicionar ao dicionário
+
             date_str = date_obj.strftime('%Y-%m-%d')
             if date_str not in workouts_by_date:
                 workouts_by_date[date_str] = []
             workouts_by_date[date_str].append(workout)
-            
-            # Estatísticas do mês atual
-            if date_obj.month == current_month and date_obj.year == current_year:
+
+            if date_obj.month == month and date_obj.year == year:
                 monthly_stats['total_workouts'] += 1
                 monthly_stats['total_tss'] += float(workout.get('tss', 0) or 0)
                 monthly_stats['total_distance'] += float(workout.get('distance', 0) or 0) / 1000
                 monthly_stats['total_duration'] += float(workout.get('duration', 0) or 0) / 3600
-                
-                # Por categoria
+
                 category = _activity_category(workout)
                 if category not in monthly_stats['by_category']:
                     monthly_stats['by_category'][category] = {'count': 0, 'distance': 0, 'duration': 0, 'tss': 0}
@@ -2541,12 +2942,9 @@ def render_calendar():
                 monthly_stats['by_category'][category]['tss'] += float(workout.get('tss', 0) or 0)
         except:
             continue
-    
-    # Criar calendário do mês
-    cal = calendar.monthcalendar(current_year, current_month)
-    month_name = calendar.month_name[current_month]
-    
-    # Mapear categorias para emojis
+
+    cal = calendar.monthcalendar(year, month)
+
     category_emoji = {
         'running': '🏃',
         'cycling': '🚴',
@@ -2554,7 +2952,7 @@ def render_calendar():
         'strength': '💪',
         'other': '⚽'
     }
-    
+
     category_names = {
         'running': 'Corrida',
         'cycling': 'Ciclismo',
@@ -2562,11 +2960,9 @@ def render_calendar():
         'strength': 'Força',
         'other': 'Outros'
     }
-    
-    # Construir grade do calendário
+
     calendar_grid = []
-    
-    # Cabeçalho dos dias da semana (incluindo coluna de resumo)
+
     weekday_header = html.Tr([
         html.Th("SEG", className="text-center py-2 px-1", style={'background': '#f8f9fa', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057'}),
         html.Th("TER", className="text-center py-2 px-1", style={'background': '#f8f9fa', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057'}),
@@ -2577,35 +2973,29 @@ def render_calendar():
         html.Th("DOM", className="text-center py-2 px-1", style={'background': '#f8f9fa', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057'}),
         html.Th("RESUMO", className="text-center py-2 px-1", style={'background': '#e9ecef', 'border': '1px solid #dee2e6', 'fontSize': '0.7rem', 'fontWeight': '600', 'color': '#495057', 'minWidth': '120px'})
     ])
-    
-    # Linhas do calendário
+
     for week in cal:
         week_cells = []
         week_stats = {'workouts': 0, 'tss': 0, 'distance': 0, 'duration': 0}
-        
+
         for day in week:
             if day == 0:
-                # Dia vazio
                 week_cells.append(html.Td("", style={'height': '110px', 'background': '#fafafa', 'border': '1px solid #dee2e6'}))
             else:
-                date_obj = datetime(current_year, current_month, day).date()
+                date_obj = datetime(year, month, day).date()
                 date_str = date_obj.strftime('%Y-%m-%d')
-                
-                # Verificar se há treinos neste dia
+
                 day_workouts = workouts_by_date.get(date_str, [])
-                
-                # Calcular TSS do dia
                 day_tss = sum(float(w.get('tss', 0) or 0) for w in day_workouts)
-                
-                # Acumular estatísticas da semana
+
                 for w in day_workouts:
                     week_stats['workouts'] += 1
                     week_stats['tss'] += float(w.get('tss', 0) or 0)
                     week_stats['distance'] += float(w.get('distance', 0) or 0) / 1000
                     week_stats['duration'] += float(w.get('duration', 0) or 0) / 3600
-                
-                is_today = date_obj == now.date()
-                
+
+                is_today = date_obj == today.date()
+
                 cell_style = {
                     'height': '110px',
                     'verticalAlign': 'top',
@@ -2613,8 +3003,7 @@ def render_calendar():
                     'border': '2px solid #2196F3' if is_today else '1px solid #dee2e6',
                     'padding': '6px'
                 }
-                
-                # Cabeçalho do dia
+
                 day_header = html.Div([
                     html.Div([
                         html.Span(str(day), style={
@@ -2629,35 +3018,31 @@ def render_calendar():
                         })
                     ])
                 ], style={'marginBottom': '6px', 'borderBottom': '1px solid #e9ecef', 'paddingBottom': '4px'})
-                
+
                 cell_content = [day_header]
-                
+
                 if day_workouts:
-                    # Cores por categoria (padrão do dashboard)
                     cat_colors = {
-                        'running': '#fd7e14',    # Laranja
-                        'cycling': '#28a745',    # Verde
-                        'swimming': '#007bff',   # Azul
-                        'strength': '#6f42c1',   # Roxo
-                        'other': '#6c757d'       # Cinza
+                        'running': '#fd7e14',
+                        'cycling': '#28a745',
+                        'swimming': '#007bff',
+                        'strength': '#6f42c1',
+                        'other': '#6c757d'
                     }
-                    
-                    # Mostrar atividades de forma simples com marcação de cor
-                    for i, w in enumerate(day_workouts[:3]):
+
+                    for w in day_workouts[:3]:
                         cat = _activity_category(w)
                         emoji = category_emoji.get(cat, '⚽')
                         name = w.get('activityName', 'Treino')[:18]
                         duration_h = float(w.get('duration', 0) or 0) / 3600
                         tss = float(w.get('tss', 0) or 0)
                         color = cat_colors.get(cat, '#95a5a6')
-                        
+
                         activity_item = html.Div([
-                            # Linha superior: nome
                             html.Div([
                                 html.Span(emoji, style={'marginRight': '3px', 'fontSize': '0.75rem'}),
                                 html.Span(name, style={'fontSize': '0.7rem', 'color': '#212529', 'fontWeight': '500'})
                             ], style={'marginBottom': '2px'}),
-                            # Linha inferior: tempo e TSS
                             html.Div([
                                 html.Span(format_hours_to_hms(duration_h), style={'fontSize': '0.65rem', 'color': '#6c757d', 'marginRight': '6px'}),
                                 html.Span(f"TSS: {tss:.0f}", style={'fontSize': '0.65rem', 'color': '#6c757d'})
@@ -2669,9 +3054,9 @@ def render_calendar():
                             'background': '#f8f9fa',
                             'fontSize': '0.7rem'
                         })
-                        
+
                         cell_content.append(activity_item)
-                    
+
                     if len(day_workouts) > 3:
                         cell_content.append(
                             html.Div(
@@ -2684,10 +3069,9 @@ def render_calendar():
                                 }
                             )
                         )
-                
+
                 week_cells.append(html.Td(cell_content, style=cell_style))
-        
-        # Adicionar célula de resumo semanal
+
         summary_cell = html.Td([
             html.Div([
                 html.Div(str(week_stats['workouts']), style={'fontSize': '1.5rem', 'fontWeight': '700', 'color': '#495057', 'marginBottom': '8px'}),
@@ -2712,9 +3096,143 @@ def render_calendar():
             'border': '1px solid #dee2e6',
             'textAlign': 'center'
         })
-        
+
         week_cells.append(summary_cell)
         calendar_grid.append(html.Tr(week_cells))
+
+    month_title = f"{_MONTHS_PT_BR[month]} {year}"
+
+    month_header = dbc.Row([
+        dbc.Col([
+            dbc.Button("◀", id="btn-calendar-prev-month", color="light", className="me-2"),
+            html.Span(month_title, id="calendar-month-title", style={'fontWeight': '600', 'fontSize': '1.25rem'}),
+            dbc.Button("▶", id="btn-calendar-next-month", color="light", className="ms-2"),
+        ], className="text-center mb-4")
+    ])
+
+    month_summary = dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H5("📊 Resumo do Mês", className="card-title mb-3 text-center", style={'fontWeight': '600'}),
+                    dbc.Row([
+                        dbc.Col([
+                            html.Div([
+                                html.Div("🏋️", style={'fontSize': '2rem'}),
+                                html.H4(f"{monthly_stats['total_workouts']}", className="text-primary mb-0"),
+                                html.Small("Treinos", className="text-muted")
+                            ], className="text-center")
+                        ], md=3),
+                        dbc.Col([
+                            html.Div([
+                                html.Div("🎯", style={'fontSize': '2rem'}),
+                                html.H4(f"{monthly_stats['total_tss']:.0f}", className="text-primary mb-0"),
+                                html.Small("TSS Total", className="text-muted")
+                            ], className="text-center")
+                        ], md=3),
+                        dbc.Col([
+                            html.Div([
+                                html.Div("📏", style={'fontSize': '2rem'}),
+                                html.H4(f"{monthly_stats['total_distance']:.1f} km", className="text-primary mb-0"),
+                                html.Small("Distância", className="text-muted")
+                            ], className="text-center")
+                        ], md=3),
+                        dbc.Col([
+                            html.Div([
+                                html.Div("⏱️", style={'fontSize': '2rem'}),
+                                html.H4(format_hours_to_hms(monthly_stats['total_duration']), className="text-primary mb-0"),
+                                html.Small("Tempo Total", className="text-muted")
+                            ], className="text-center")
+                        ], md=3)
+                    ])
+                ])
+            ], className="shadow-sm border-0 mb-4", style={'borderRadius': '12px'})
+        ])
+    ])
+
+    calendar_table = dbc.Row([
+        dbc.Col([
+            html.Div([
+                html.Table([
+                    html.Thead([weekday_header]),
+                    html.Tbody(calendar_grid)
+                ], className="table table-bordered mb-0", style={
+                    'width': '100%',
+                    'tableLayout': 'fixed'
+                })
+            ], className="calendar-scroll")
+        ])
+    ], className="mb-4")
+
+    modality_stats = dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H5("📈 Estatísticas por Modalidade", className="card-title mb-2 text-center", style={'fontWeight': '600'}),
+                    (
+                        dbc.Table([
+                            html.Thead([
+                                html.Tr([
+                                    html.Th("Modalidade", style={'width': '36%'}),
+                                    html.Th("Treinos", className="text-end", style={'width': '16%'}),
+                                    html.Th("Distância", className="text-end", style={'width': '16%'}),
+                                    html.Th("Tempo", className="text-end", style={'width': '16%'}),
+                                    html.Th("TSS", className="text-end", style={'width': '16%'}),
+                                ])
+                            ]),
+                            html.Tbody([
+                                html.Tr([
+                                    html.Td(f"{category_emoji.get(cat, '⚽')} {category_names.get(cat, cat.title())}"),
+                                    html.Td(f"{stats['count']}", className="text-end"),
+                                    html.Td(f"{stats['distance']:.1f} km", className="text-end"),
+                                    html.Td(format_hours_to_hms(stats['duration']), className="text-end"),
+                                    html.Td(f"{stats['tss']:.0f}", className="text-end"),
+                                ])
+                                for cat, stats in sorted(monthly_stats['by_category'].items(), key=lambda x: x[1]['count'], reverse=True)
+                            ])
+                        ], bordered=False, striped=False, hover=False, responsive="sm", className="table table-sm mb-0", style={'fontSize': '0.9rem', 'width': '100%', 'tableLayout': 'fixed'} )
+                        if monthly_stats.get('by_category')
+                        else dbc.Alert(
+                            "Nenhuma atividade encontrada neste mês.",
+                            color="light",
+                            className="mb-0",
+                        )
+                    )
+                ])
+            ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+        ])
+    ])
+
+    return [month_header, month_summary, calendar_table, modality_stats]
+
+
+def render_calendar():
+    workouts = enrich_workouts_with_tss(load_workouts())
+    config = load_config()
+    
+    if not workouts:
+        return dbc.Container([
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        html.H1("📅 Calendário", className="text-primary mb-2", style={'fontWeight': '700'}),
+                        html.P("Visualize suas atividades dia a dia", className="text-muted mb-4", style={'fontSize': '1.1rem'})
+                    ], className="text-center py-3")
+                ])
+            ], className="bg-light rounded-3 mb-4"),
+            dbc.Row([
+                dbc.Col([
+                    dbc.Alert([
+                        html.H5("⚠️ Nenhum treino disponível", className="alert-heading"),
+                        html.P("Vá para 'Configuração' para sincronizar com Garmin Connect.")
+                    ], color="warning")
+                ])
+            ])
+        ])
+    
+    now = datetime.now()
+    current_month = now.month
+    current_year = now.year
     
     return dbc.Container([
         # Cabeçalho
@@ -2750,107 +3268,49 @@ def render_calendar():
             ])
         ], className="mb-5"),
         
-        # Título do mês
-        dbc.Row([
-            dbc.Col([
-                html.H3(f"{month_name} {current_year}", className="text-center mb-4", style={'fontWeight': '600'})
-            ])
-        ]),
-        
-        # Resumo mensal
-        dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.H5("📊 Resumo do Mês", className="card-title mb-3 text-center", style={'fontWeight': '600'}),
-                        dbc.Row([
-                            dbc.Col([
-                                html.Div([
-                                    html.Div("🏋️", style={'fontSize': '2rem'}),
-                                    html.H4(f"{monthly_stats['total_workouts']}", className="text-primary mb-0"),
-                                    html.Small("Treinos", className="text-muted")
-                                ], className="text-center")
-                            ], md=3),
-                            dbc.Col([
-                                html.Div([
-                                    html.Div("🎯", style={'fontSize': '2rem'}),
-                                    html.H4(f"{monthly_stats['total_tss']:.0f}", className="text-primary mb-0"),
-                                    html.Small("TSS Total", className="text-muted")
-                                ], className="text-center")
-                            ], md=3),
-                            dbc.Col([
-                                html.Div([
-                                    html.Div("📏", style={'fontSize': '2rem'}),
-                                    html.H4(f"{monthly_stats['total_distance']:.1f} km", className="text-primary mb-0"),
-                                    html.Small("Distância", className="text-muted")
-                                ], className="text-center")
-                            ], md=3),
-                            dbc.Col([
-                                html.Div([
-                                    html.Div("⏱️", style={'fontSize': '2rem'}),
-                                    html.H4(format_hours_to_hms(monthly_stats['total_duration']), className="text-primary mb-0"),
-                                    html.Small("Tempo Total", className="text-muted")
-                                ], className="text-center")
-                            ], md=3)
-                        ])
-                    ])
-                ], className="shadow-sm border-0 mb-4", style={'borderRadius': '12px'})
-            ])
-        ]),
-        
-        # Grade do calendário
-        dbc.Row([
-            dbc.Col([
-                html.Div([
-                    html.Table([
-                        html.Thead([weekday_header]),
-                        html.Tbody(calendar_grid)
-                    ], className="table table-bordered mb-0", style={
-                        'width': '100%',
-                        'tableLayout': 'fixed'
-                    })
-                ], style={'overflowX': 'auto'})
-            ])
-        ], className="mb-4"),
-        
-        # Detalhes por modalidade
-        dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardBody([
-                        html.H5("📈 Estatísticas por Modalidade", className="card-title mb-3 text-center", style={'fontWeight': '600'}),
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Card([
-                                    dbc.CardBody([
-                                        html.H6(f"{category_emoji.get(cat, '⚽')} {category_names.get(cat, cat.title())}", className="text-center mb-3", style={'fontWeight': '600'}),
-                                        html.Hr(),
-                                        html.Div([
-                                            html.Small("Treinos: ", className="text-muted"),
-                                            html.Strong(f"{stats['count']}")
-                                        ], className="mb-2"),
-                                        html.Div([
-                                            html.Small("Distância: ", className="text-muted"),
-                                            html.Strong(f"{stats['distance']:.1f} km")
-                                        ], className="mb-2"),
-                                        html.Div([
-                                            html.Small("Tempo: ", className="text-muted"),
-                                            html.Strong(format_hours_to_hms(stats['duration']))
-                                        ], className="mb-2"),
-                                        html.Div([
-                                            html.Small("TSS: ", className="text-muted"),
-                                            html.Strong(f"{stats['tss']:.0f}")
-                                        ])
-                                    ])
-                                ], className="mb-3 shadow-sm", style={'borderRadius': '10px'})
-                            ], md=4)
-                            for cat, stats in sorted(monthly_stats['by_category'].items(), key=lambda x: x[1]['count'], reverse=True)
-                        ])
-                    ])
-                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
-            ])
-        ])
+        dcc.Store(id="calendar-month-store", data={"year": current_year, "month": current_month}),
+        html.Div(
+            id="calendar-month-content",
+            children=_render_calendar_month_section(workouts, current_year, current_month, now),
+        )
     ])
+
+
+@app.callback(
+    Output("calendar-month-store", "data"),
+    Input("btn-calendar-prev-month", "n_clicks"),
+    Input("btn-calendar-next-month", "n_clicks"),
+    State("calendar-month-store", "data"),
+    prevent_initial_call=True,
+)
+def calendar_change_month(prev_clicks, next_clicks, data):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return data
+
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    year = int((data or {}).get('year', datetime.now().year))
+    month = int((data or {}).get('month', datetime.now().month))
+
+    if triggered_id == "btn-calendar-prev-month":
+        year, month = _shift_month(year, month, -1)
+    elif triggered_id == "btn-calendar-next-month":
+        year, month = _shift_month(year, month, 1)
+
+    return {"year": year, "month": month}
+
+
+@app.callback(
+    Output("calendar-month-content", "children"),
+    Input("calendar-month-store", "data"),
+)
+def calendar_render_month(data):
+    year = int((data or {}).get('year', datetime.now().year))
+    month = int((data or {}).get('month', datetime.now().month))
+
+    workouts = enrich_workouts_with_tss(load_workouts())
+    now = datetime.now()
+    return _render_calendar_month_section(workouts, year, month, now)
 
 def render_goals():
     workouts = enrich_workouts_with_tss(load_workouts())
@@ -3320,6 +3780,7 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
     """
     try:
         from garminconnect import Garmin
+        from pathlib import Path
         
         client = None
         
@@ -3328,14 +3789,13 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
             # Primeiro validar tokens localmente (sem conectar ao servidor)
             if validate_garmin_tokens_locally():
                 try:
+                    token_dir = Path("garmin_tokens.json")
                     client = Garmin()
                     client.garth.load(str(token_dir))
-                    print("✅ Login com tokens bem-sucedido")
                 except Exception as e:
-                    print(f"⚠️ Login com tokens falhou: {e}")
                     client = None
             else:
-                print("⚠️ Tokens não encontrados ou inválidos localmente")
+                pass
         
         # Se falhar com tokens ou não disponível, tentar com email/password
         if client is None:
@@ -3344,7 +3804,6 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
             
             client = Garmin(email, password)
             client.login()
-            print("✅ Login com email/senha bem-sucedido")
             
             # Salvar os novos tokens após login bem-sucedido
             save_garmin_tokens(client)
@@ -3431,18 +3890,20 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
                     # Se não conseguir parsear, incluir na dúvida
                     dashboard_activities.append(a)
 
-        dashboard_with_tss = []
-        
-        for a in dashboard_activities:
-            a_copy = dict(a)
-            tss_data = compute_tss_variants(a_copy, config)
-            a_copy['tss'] = tss_data.get('tss', 0.0)
-            
-            dashboard_with_tss.append(a_copy)
-
         # Calcular métricas apenas com dados dos últimos 42 dias
+        # (enriquece com TSS uma vez e reaproveita)
+        dashboard_with_tss = enrich_workouts_with_tss(dashboard_activities, config)
         metrics = calculate_fitness_metrics(dashboard_with_tss, config, dashboard_cutoff, end_date)
         save_metrics(metrics)
+
+        # Persistir timestamp real da última sincronização (não depende de refresh do browser)
+        try:
+            now_utc = datetime.now().astimezone().isoformat(timespec='seconds')
+            state = load_sync_state()
+            state['last_garmin_sync'] = now_utc
+            save_sync_state(state)
+        except Exception:
+            pass
 
         new_count = len(new_activities)
         total_count = len(all_activities)
@@ -3454,97 +3915,6 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
         return False, "❌ Erro: garminconnect não instalado. Instale com: pip install garminconnect"
     except Exception as e:
         return False, f"❌ Erro ao buscar dados: {str(e)}"
-
-def compute_tss_variants(activity: dict, config: dict) -> dict:
-    """Calcula TSS usando a função correta do calculations.py
-    
-    Delega para calculations.compute_tss_variants que implementa:
-    - TSS (power-based) para ciclismo
-    - rTSS (pace-based) para corrida
-    - hrTSS (heart rate-based) para natação e força
-    """
-    from calculations import compute_tss_variants as calc_tss
-    
-    # Chamar função correta do calculations.py passando activity e config
-    result = calc_tss(activity, config)
-    
-    # A função do calculations.py retorna: {'tss': float, 'tss_type': str, 'category': str, 'breakdown': dict}
-    # Manter compatibilidade retornando tss e category
-    return {
-        'tss': result.get('tss', 0.0),
-        'category': result.get('category', _activity_category(activity))
-    }
-
-def calculate_fitness_metrics(activities, config, start_date, end_date):
-    """Calcula métricas de fitness (CTL, ATL, TSB) baseadas em TSS diário.
-
-    Isso garante que Dashboard e Calendário usem a mesma base (TSS dinâmico)
-    e evita depender de arquivos com métricas antigas.
-    """
-    # Agrupar TSS por data
-    daily_loads = {}
-    for activity in activities:
-        start_time = activity.get('startTimeLocal') or activity.get('startTime') or ''
-        if not start_time:
-            continue
-
-        try:
-            # startTimeLocal pode ser "YYYY-MM-DD HH:MM:SS" ou ISO
-            if 'T' not in start_time:
-                start_time = start_time.replace(' ', 'T')
-            if not start_time.endswith('Z') and '+' not in start_time:
-                start_time += 'Z'
-            date = datetime.fromisoformat(start_time.replace('Z', '+00:00')).date()
-        except Exception:
-            continue
-
-        # Usar TSS (se já estiver enriquecido); se não, calcular agora.
-        try:
-            tss_val = float(activity.get('tss') or 0)
-        except Exception:
-            tss_val = 0.0
-
-        if tss_val <= 0:
-            try:
-                tss_val = float(compute_tss_variants(dict(activity), config).get('tss', 0.0) or 0.0)
-            except Exception:
-                tss_val = 0.0
-
-        daily_loads[date] = daily_loads.get(date, 0.0) + tss_val
-    
-    # Lista de dias
-    days = []
-    current_date = start_date
-    while current_date <= end_date:
-        days.append(current_date)
-        current_date += timedelta(days=1)
-    
-    # Calcular métricas cumulativas
-    metrics = []
-    ctl = 0.0
-    atl = 0.0
-    
-    for day in days:
-        daily_tss = daily_loads.get(day, 0.0)
-        
-        # CTL (Chronic Training Load) - tempo de meia-vida de 42 dias
-        ctl = ctl + (daily_tss - ctl) / 42.0
-        
-        # ATL (Acute Training Load) - tempo de meia-vida de 7 dias
-        atl = atl + (daily_tss - atl) / 7.0
-        
-        # TSB (Training Stress Balance) = CTL - ATL
-        tsb = ctl - atl
-        
-        metrics.append({
-            'date': day.isoformat(),
-            'ctl': round(ctl, 1),
-            'atl': round(atl, 1),
-            'tsb': round(tsb, 1),
-            'daily_load': round(daily_tss, 1)
-        })
-    
-    return metrics
 
 def create_modality_subplot_chart(data, modality_info, modality_key):
     """Cria gráfico com subplots 2x2 para evolução semanal da modalidade"""
@@ -3664,16 +4034,21 @@ def create_modality_trend_chart(data, modality_info, modality_name):
     distancia = [week['distance'] for week in data]
     tss = [week['tss'] for week in data]
     
-    # Cores temáticas por modalidade
-    cores_modalidade = {
-        'swimming': {'primary': '#007bff', 'secondary': '#cce5ff'},  # Azul - Natação
-        'cycling': {'primary': '#28a745', 'secondary': '#d4edda'},   # Verde - Ciclismo
-        'running': {'primary': '#fd7e14', 'secondary': '#ffe5d0'},   # Laranja - Corrida
-        'strength': {'primary': '#6f42c1', 'secondary': '#e7d9ff'}   # Roxo - Musculação
-    }
-    
-    modality_key = modality_info.get('key', 'unknown')
-    cores = cores_modalidade.get(modality_key, {'primary': '#666', 'secondary': '#ccc'})
+    def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+        try:
+            if not hex_color or not str(hex_color).startswith('#') or len(hex_color) != 7:
+                return f"rgba(0,0,0,{alpha})"
+            r = int(hex_color[1:3], 16)
+            g = int(hex_color[3:5], 16)
+            b = int(hex_color[5:7], 16)
+            a = max(0.0, min(1.0, float(alpha)))
+            return f"rgba({r},{g},{b},{a})"
+        except Exception:
+            return f"rgba(0,0,0,{alpha})"
+
+    # Respeitar as cores já definidas para a modalidade
+    primary = (modality_info or {}).get('primary') or '#666'
+    secondary = (modality_info or {}).get('secondary') or primary
     
     # Gráfico de tendência
     fig = go.Figure()
@@ -3685,10 +4060,10 @@ def create_modality_trend_chart(data, modality_info, modality_name):
             y=distancia,
             mode='lines+markers',
             name='Distância (km)',
-            line=dict(color=cores['primary'], width=3),
-            marker=dict(size=6, color=cores['primary']),
+            line=dict(color=primary, width=3),
+            marker=dict(size=6, color=primary),
             fill='tozeroy',
-            fillcolor='rgba(25, 118, 210, 0.2)',  # Azul com transparência
+            fillcolor=_hex_to_rgba(primary, 0.18),
             hovertemplate='<b>Distância</b><br>Semana %{x}<br>%{y:.1f} km<extra></extra>'
         )
     )
@@ -3700,8 +4075,8 @@ def create_modality_trend_chart(data, modality_info, modality_name):
             y=tss,
             mode='lines+markers',
             name='TSS',
-            line=dict(color=cores['secondary'], width=3, dash='dash'),
-            marker=dict(size=6, color=cores['secondary'], symbol='diamond'),
+            line=dict(color=primary, width=3, dash='dash'),
+            marker=dict(size=6, color=primary, symbol='diamond'),
             yaxis='y2',
             hovertemplate='<b>TSS</b><br>Semana %{x}<br>%{y:.0f}<extra></extra>'
         )
@@ -3725,11 +4100,11 @@ def create_modality_trend_chart(data, modality_info, modality_name):
         margin=dict(l=50, r=50, t=80, b=50),
         yaxis=dict(
             title='Distância (km)',
-            tickfont=dict(color=cores['primary'])
+            tickfont=dict(color=primary)
         ),
         yaxis2=dict(
             title='TSS',
-            tickfont=dict(color=cores['secondary']),
+            tickfont=dict(color=primary),
             anchor='x',
             overlaying='y',
             side='right'
@@ -3780,9 +4155,22 @@ def toggle_dark_mode(n_clicks, current_mode):
 def update_last_sync_badge(active_tab):
     """Atualiza o badge mostrando quando foi a última sincronização"""
     try:
-        if METRICS_FILE.exists():
-            modified_time = datetime.fromtimestamp(METRICS_FILE.stat().st_mtime)
-            time_diff = datetime.now() - modified_time
+        state = load_sync_state()
+        last_sync_raw = state.get('last_garmin_sync')
+
+        modified_time = None
+        if last_sync_raw:
+            try:
+                modified_time = datetime.fromisoformat(str(last_sync_raw))
+            except Exception:
+                modified_time = None
+
+        # Fallback: usar o arquivo de workouts (só muda quando sincroniza)
+        if modified_time is None and WORKOUTS_FILE.exists():
+            modified_time = datetime.fromtimestamp(WORKOUTS_FILE.stat().st_mtime)
+
+        if modified_time is not None:
+            time_diff = datetime.now(modified_time.tzinfo) - modified_time if modified_time.tzinfo else datetime.now() - modified_time
             
             if time_diff.total_seconds() < 60:
                 time_str = "agora há pouco"

@@ -787,3 +787,57 @@ body.dark-mode .text-muted {
     font-family: monospace;
     border: 1px solid #404044;
 }
+
+/* ========== SCROLL RESPONSIVO (MOBILE) ========== */
+/* Mantém responsividade, mas evita barras de scroll visuais quando não há overflow */
+.table-responsive {
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Esconde a barra visual (a rolagem continua funcionando) */
+.table-responsive::-webkit-scrollbar {
+    height: 0;
+}
+
+.table-responsive {
+    scrollbar-width: none;
+    /* Firefox */
+}
+
+.calendar-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.calendar-scroll::-webkit-scrollbar {
+    height: 0;
+}
+
+.calendar-scroll {
+    scrollbar-width: none;
+    /* Firefox */
+}
+
+/* Mobile: não espremer colunas; permitir swipe quando precisar */
+@media (max-width: 576px) {
+
+    /* Tabelas responsivas (dbc.Table responsive="sm") */
+    .table-responsive table {
+        min-width: 560px;
+    }
+
+    .table-responsive th,
+    .table-responsive td {
+        white-space: nowrap;
+    }
+
+    /* Calendário mensal: 7 dias + resumo fica ilegível se comprimir */
+    .calendar-scroll table {
+        min-width: 920px;
+    }
+
+    .calendar-scroll th,
+    .calendar-scroll td {
+        min-width: 110px;
+    }
+}
