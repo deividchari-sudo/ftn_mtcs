@@ -11,11 +11,10 @@ Gerencia leitura e gravação de:
 import json
 import os
 import logging
+import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
 import base64
 
 logger = logging.getLogger(__name__)
@@ -26,20 +25,32 @@ DATA_DIR = Path.home() / ".fitness_metrics"
 DATA_DIR.mkdir(exist_ok=True, mode=0o700)  # Apenas owner pode acessar
 TOKEN_DIR = Path("garmin_tokens.json")
 
+CONFIG_FILE = DATA_DIR / "user_config.json"
+CREDENTIALS_FILE = DATA_DIR / "garmin_credentials.json"
+METRICS_FILE = DATA_DIR / "fitness_metrics.json"
+WORKOUTS_FILE = DATA_DIR / "workouts_42_dias.json"
+SYNC_FILE = DATA_DIR / "sync_state.json"
+HEALTH_DATA_FILE = DATA_DIR / "health_metrics.json"
+TRAINING_STATUS_FILE = DATA_DIR / "training_status.json"
+EXERCISES_FILE = DATA_DIR / "exercises.json"
+
 
 def _get_encryption_key() -> bytes:
-    """Gera chave de encriptação baseada em machine-id (PBKDF2)"""
+    """Gera chave de encriptação baseada em machine-id usando hashlib"""
     try:
         import platform
         machine_id = f"{platform.node()}{platform.system()}"
-        kdf = PBKDF2(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=b'fitness_metrics_salt_v1',
-            iterations=100000,
+        
+        # Derivar chave usando PBKDF2 com hashlib (compatível com todas as versões)
+        # 100k iterações para resistência contra força bruta
+        key = hashlib.pbkdf2_hmac(
+            'sha256',
+            machine_id.encode(),
+            b'fitness_metrics_salt_v1',
+            100000
         )
-        key = base64.urlsafe_b64encode(kdf.derive(machine_id.encode()))
-        return key
+        # Codificar em base64 para Fernet
+        return base64.urlsafe_b64encode(key[:32])
     except Exception as e:
         logger.error(f"Erro ao gerar chave de criptografia: {e}")
         raise

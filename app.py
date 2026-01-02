@@ -2613,16 +2613,16 @@ def create_recent_activities_table():
                 table_rows.append(html.Tr([
                     html.Td([
                         html.Div(activity_name[:35] + "..." if len(activity_name) > 35 else activity_name, 
-                                style={'fontWeight': '500', 'marginBottom': '2px'}),
+                                style={'fontWeight': '500', 'marginBottom': '1px'}),
                         html.Small(pace_info, className="text-muted") if pace_info else None
-                    ]),
-                    html.Td(modality_label),
-                    html.Td(distance_str),
-                    html.Td(format_hours_to_hms(duration_hours)),
+                    ], style={'padding': '0.35rem 0.5rem', 'verticalAlign': 'middle'}),
+                    html.Td(modality_label, style={'padding': '0.35rem 0.5rem', 'verticalAlign': 'middle'}),
+                    html.Td(distance_str, style={'padding': '0.35rem 0.5rem', 'verticalAlign': 'middle'}),
+                    html.Td(format_hours_to_hms(duration_hours), style={'padding': '0.35rem 0.5rem', 'verticalAlign': 'middle'}),
                     html.Td([
                         get_intensity_badge(tss_value),
                         html.Span(f"{tss_value:.0f}", style={'fontWeight': '600'})
-                    ])
+                    ], style={'padding': '0.35rem 0.5rem', 'verticalAlign': 'middle'})
                 ]))
                 
             except Exception as e:
@@ -2632,16 +2632,21 @@ def create_recent_activities_table():
         return dbc.Table([
             html.Thead([
                 html.Tr([
-                    html.Th("Atividade", style={'width': '35%'}),
-                    html.Th("Modalidade", style={'width': '15%'}),
-                    html.Th("Distância", style={'width': '15%'}),
-                    html.Th("Duração", style={'width': '15%'}),
-                    html.Th("TSS / Intensidade", style={'width': '20%'})
+                    html.Th("Atividade", style={'width': '35%', 'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("Modalidade", style={'width': '15%', 'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("Distância", style={'width': '15%', 'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("Duração", style={'width': '15%', 'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("TSS / Intensidade", style={'width': '20%', 'padding': '0.5rem', 'fontSize': '0.9rem'})
                 ], style={'background': '#f8f9fa'})
             ]),
-            html.Tbody(table_rows)
+            html.Tbody(table_rows, style={'fontSize': '0.9rem'})
           ], bordered=True, hover=True, responsive="sm", size="sm", className="mb-0", 
-              style={'background': 'white', 'width': '100%', 'tableLayout': 'fixed'})
+              style={
+                  'background': 'white', 
+                  'width': '100%', 
+                  'tableLayout': 'fixed',
+                  'borderCollapse': 'collapse'
+              })
         
     except Exception as e:
         return html.Div("Erro ao carregar atividades recentes.", className="text-danger")
@@ -2663,11 +2668,11 @@ def create_metrics_history_table(metrics):
                 daily_load = m.get('daily_load', 0.0)
                 
                 table_rows.append(html.Tr([
-                    html.Td(f"{date_str} ({weekday})"),
-                    html.Td(f"{m['ctl']:.2f}"),
-                    html.Td(f"{m['atl']:.2f}"),
-                    html.Td(f"{m['tsb']:.2f}"),
-                    html.Td(f"{daily_load:.1f}")
+                    html.Td(f"{date_str} ({weekday})", style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem'}),
+                    html.Td(f"{m['ctl']:.2f}", style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem'}),
+                    html.Td(f"{m['atl']:.2f}", style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem'}),
+                    html.Td(f"{m['tsb']:.2f}", style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem'}),
+                    html.Td(f"{daily_load:.1f}", style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem'})
                 ]))
                 
             except Exception as e:
@@ -2676,15 +2681,16 @@ def create_metrics_history_table(metrics):
         return dbc.Table([
             html.Thead([
                 html.Tr([
-                    html.Th("Data"),
-                    html.Th("CTL"),
-                    html.Th("ATL"),
-                    html.Th("TSB"),
-                    html.Th("Carga Diária")
+                    html.Th("Data", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("CTL", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("ATL", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("TSB", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("Carga Diária", style={'padding': '0.5rem', 'fontSize': '0.9rem'})
                 ])
             ]),
             html.Tbody(table_rows)
-        ], striped=True, bordered=True, hover=True, responsive="sm", size="sm", className="mb-0", style={'width': '100%', 'tableLayout': 'fixed'})
+        ], striped=True, bordered=True, hover=True, responsive="sm", size="sm", className="mb-0", 
+           style={'width': '100%', 'tableLayout': 'fixed', 'borderCollapse': 'collapse'})
         
     except Exception as e:
         return html.Div("Erro ao carregar histórico de métricas.", className="text-danger")
@@ -2879,16 +2885,17 @@ def create_modality_analysis_tabs():
                             dbc.Table([
                                 html.Thead([
                                     html.Tr([
-                                        html.Th("Semana"),
-                                        html.Th("Período"),
-                                        html.Th("Distância"),
-                                        html.Th("TSS"),
-                                        html.Th("Horas"),
-                                        html.Th("Atividades")
+                                        html.Th("Semana", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                                        html.Th("Período", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                                        html.Th("Distância", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                                        html.Th("TSS", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                                        html.Th("Horas", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                                        html.Th("Atividades", style={'padding': '0.5rem', 'fontSize': '0.9rem'})
                                     ])
                                 ]),
-                                html.Tbody(table_rows)
-                            ], striped=True, bordered=True, hover=True, responsive="sm", size="sm", style={'width': '100%', 'tableLayout': 'fixed'})
+                                html.Tbody(table_rows, style={'fontSize': '0.9rem'})
+                            ], striped=True, bordered=True, hover=True, responsive="sm", size="sm", 
+                               style={'width': '100%', 'tableLayout': 'fixed', 'borderCollapse': 'collapse'})
                         ])
                     ]),
                     
@@ -3320,24 +3327,25 @@ def _render_calendar_month_section(workouts, year: int, month: int, today: datet
                         dbc.Table([
                             html.Thead([
                                 html.Tr([
-                                    html.Th("Modalidade", style={'width': '36%'}),
-                                    html.Th("Treinos", className="text-end", style={'width': '16%'}),
-                                    html.Th("Distância", className="text-end", style={'width': '16%'}),
-                                    html.Th("Tempo", className="text-end", style={'width': '16%'}),
-                                    html.Th("TSS", className="text-end", style={'width': '16%'}),
+                                    html.Th("Modalidade", style={'width': '36%', 'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                                    html.Th("Treinos", className="text-end", style={'width': '16%', 'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                                    html.Th("Distância", className="text-end", style={'width': '16%', 'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                                    html.Th("Tempo", className="text-end", style={'width': '16%', 'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                                    html.Th("TSS", className="text-end", style={'width': '16%', 'padding': '0.5rem', 'fontSize': '0.9rem'}),
                                 ])
                             ]),
                             html.Tbody([
                                 html.Tr([
-                                    html.Td(f"{category_emoji.get(cat, '⚽')} {category_names.get(cat, cat.title())}"),
-                                    html.Td(f"{stats['count']}", className="text-end"),
-                                    html.Td(f"{stats['distance']:.1f} km", className="text-end"),
-                                    html.Td(format_hours_to_hms(stats['duration']), className="text-end"),
-                                    html.Td(f"{stats['tss']:.0f}", className="text-end"),
+                                    html.Td(f"{category_emoji.get(cat, '⚽')} {category_names.get(cat, cat.title())}", style={'padding': '0.35rem 0.5rem'}),
+                                    html.Td(f"{stats['count']}", className="text-end", style={'padding': '0.35rem 0.5rem'}),
+                                    html.Td(f"{stats['distance']:.1f} km", className="text-end", style={'padding': '0.35rem 0.5rem'}),
+                                    html.Td(format_hours_to_hms(stats['duration']), className="text-end", style={'padding': '0.35rem 0.5rem'}),
+                                    html.Td(f"{stats['tss']:.0f}", className="text-end", style={'padding': '0.35rem 0.5rem'}),
                                 ])
                                 for cat, stats in sorted(monthly_stats['by_category'].items(), key=lambda x: x[1]['count'], reverse=True)
                             ])
-                        ], bordered=False, striped=False, hover=False, responsive="sm", className="table table-sm mb-0", style={'fontSize': '0.9rem', 'width': '100%', 'tableLayout': 'fixed'} )
+                        ], bordered=False, striped=False, hover=False, responsive="sm", className="table table-sm mb-0", 
+                           style={'fontSize': '0.9rem', 'width': '100%', 'tableLayout': 'fixed', 'borderCollapse': 'collapse'} )
                         if monthly_stats.get('by_category')
                         else dbc.Alert(
                             "Nenhuma atividade encontrada neste mês.",
@@ -4941,69 +4949,69 @@ def populate_zones_modal(n_clicks):
             dbc.Table([
                 html.Thead([
                     html.Tr([
-                        html.Th("Zona"),
-                        html.Th("Nome"),
-                        html.Th("Pace (s/100m)"),
-                        html.Th("% CSS"),
-                        html.Th("Descrição")
+                        html.Th("Zona", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("Nome", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("Pace (s/100m)", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("% CSS", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("Descrição", style={'padding': '0.5rem', 'fontSize': '0.9rem'})
                     ])
                 ]),
                 html.Tbody([
                     html.Tr([
-                        html.Td(html.Span("●", style={'color': zone['color'], 'fontSize': '20px'})),
-                        html.Td(html.Strong(zone['name'])),
-                        html.Td(zone['pace_display']),
-                        html.Td(f"{SWIMMING_ZONES[zone_id]['css_percent'][0]}-{SWIMMING_ZONES[zone_id]['css_percent'][1]}%"),
-                        html.Td(zone['description'], style={'fontSize': '0.9em'})
+                        html.Td(html.Span("●", style={'color': zone['color'], 'fontSize': '20px'}), style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(html.Strong(zone['name']), style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(zone['pace_display'], style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(f"{SWIMMING_ZONES[zone_id]['css_percent'][0]}-{SWIMMING_ZONES[zone_id]['css_percent'][1]}%", style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(zone['description'], style={'fontSize': '0.85rem', 'padding': '0.35rem 0.5rem'})
                     ]) for zone_id, zone in swim_zones.items()
                 ])
-            ], bordered=True, hover=True, className="mb-4"),
+            ], bordered=True, hover=True, className="mb-4", style={'borderCollapse': 'collapse', 'fontSize': '0.9rem'}),
             
             # Ciclismo
             html.H4("🚴 Zonas de Ciclismo", className="mb-3 mt-4"),
             dbc.Table([
                 html.Thead([
                     html.Tr([
-                        html.Th("Zona"),
-                        html.Th("Nome"),
-                        html.Th("Potência (W)"),
-                        html.Th("% FTP"),
-                        html.Th("Descrição")
+                        html.Th("Zona", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("Nome", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("Potência (W)", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("% FTP", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("Descrição", style={'padding': '0.5rem', 'fontSize': '0.9rem'})
                     ])
                 ]),
                 html.Tbody([
                     html.Tr([
-                        html.Td(html.Span("●", style={'color': zone['color'], 'fontSize': '20px'})),
-                        html.Td(html.Strong(zone['name'])),
-                        html.Td(zone['power_display']),
-                        html.Td(f"{CYCLING_ZONES[zone_id]['ftp_percent'][0]}-{CYCLING_ZONES[zone_id]['ftp_percent'][1]}%"),
-                        html.Td(zone['description'], style={'fontSize': '0.9em'})
+                        html.Td(html.Span("●", style={'color': zone['color'], 'fontSize': '20px'}), style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(html.Strong(zone['name']), style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(zone['power_display'], style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(f"{CYCLING_ZONES[zone_id]['ftp_percent'][0]}-{CYCLING_ZONES[zone_id]['ftp_percent'][1]}%", style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(zone['description'], style={'fontSize': '0.85rem', 'padding': '0.35rem 0.5rem'})
                     ]) for zone_id, zone in bike_zones.items()
                 ])
-            ], bordered=True, hover=True, className="mb-4"),
+            ], bordered=True, hover=True, className="mb-4", style={'borderCollapse': 'collapse', 'fontSize': '0.9rem'}),
             
             # Corrida
             html.H4("🏃 Zonas de Corrida", className="mb-3 mt-4"),
             dbc.Table([
                 html.Thead([
                     html.Tr([
-                        html.Th("Zona"),
-                        html.Th("Nome"),
-                        html.Th("FC (bpm)"),
-                        html.Th("Pace (min/km)"),
-                        html.Th("Descrição")
+                        html.Th("Zona", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("Nome", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("FC (bpm)", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("Pace (min/km)", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                        html.Th("Descrição", style={'padding': '0.5rem', 'fontSize': '0.9rem'})
                     ])
                 ]),
                 html.Tbody([
                     html.Tr([
-                        html.Td(html.Span("●", style={'color': zone['color'], 'fontSize': '20px'})),
-                        html.Td(html.Strong(zone['name'])),
-                        html.Td(zone['hr_display']),
-                        html.Td(zone.get('pace_display', 'N/A')),
-                        html.Td(zone['description'], style={'fontSize': '0.9em'})
+                        html.Td(html.Span("●", style={'color': zone['color'], 'fontSize': '20px'}), style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(html.Strong(zone['name']), style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(zone['hr_display'], style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(zone.get('pace_display', 'N/A'), style={'padding': '0.35rem 0.5rem'}),
+                        html.Td(zone['description'], style={'fontSize': '0.85rem', 'padding': '0.35rem 0.5rem'})
                     ]) for zone_id, zone in run_zones.items()
                 ])
-            ], bordered=True, hover=True, className="mb-4"),
+            ], bordered=True, hover=True, className="mb-4", style={'borderCollapse': 'collapse', 'fontSize': '0.9rem'}),
             
             html.Hr(),
             html.P([
