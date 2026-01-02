@@ -342,7 +342,7 @@ def create_export_section():
             dbc.Col([
                 html.Div([
                     html.H3("📥 Exportar Dados", className="mb-3 text-primary", style={'fontWeight': '700'}),
-                    html.P("Baixe seus dados em formato CSV para análise em Excel ou ferramentas externas", className="text-muted mb-4", style={'fontSize': '0.95rem'})
+                    html.P("Baixe seus dados em formato CSV ou relatórios profissionais em PDF", className="text-muted mb-4", style={'fontSize': '0.95rem'})
                 ], className="text-center")
             ])
         ]),
@@ -350,16 +350,17 @@ def create_export_section():
         dbc.Row([
             dbc.Col([
                 dbc.Card([
+                    dbc.CardHeader(html.H5("📄 Relatórios PDF", className="mb-0 text-white"), style={'backgroundColor': '#1f77b4'}),
                     dbc.CardBody([
+                        html.P("Gere relatórios profissionais em PDF com análise completa de métricas e treinos", className="text-muted mb-3"),
                         dbc.Row([
                             dbc.Col([
                                 html.Div([
-                                    html.H5("📊 Métricas de Fitness", className="mb-2"),
-                                    html.P("CTL, ATL, TSB e carga diária dos últimos 42 dias", className="text-muted small"),
-                                    html.Hr(className="my-2"),
+                                    html.H6("📅 Relatório Semanal", className="mb-2"),
+                                    html.P("Últimos 7 dias com resumo, métricas e recomendações", className="text-muted small"),
                                     dbc.Button(
-                                        [html.I(className="bi bi-download me-2"), "Baixar CSV"],
-                                        id="btn-export-metrics",
+                                        [html.I(className="bi bi-file-earmark-pdf me-2"), "Gerar PDF Semanal"],
+                                        id="btn-export-weekly-pdf",
                                         color="primary",
                                         className="w-100",
                                         style={'borderRadius': '8px'}
@@ -368,9 +369,47 @@ def create_export_section():
                             ], md=6, className="mb-3"),
                             dbc.Col([
                                 html.Div([
-                                    html.H5("⏃ Atividades de Treino", className="mb-2"),
+                                    html.H6("📊 Relatório Mensal", className="mb-2"),
+                                    html.P("Análise completa do mês com evolução e conquistas", className="text-muted small"),
+                                    dbc.Button(
+                                        [html.I(className="bi bi-file-earmark-pdf me-2"), "Gerar PDF Mensal"],
+                                        id="btn-export-monthly-pdf",
+                                        color="info",
+                                        className="w-100",
+                                        style={'borderRadius': '8px'}
+                                    )
+                                ])
+                            ], md=6)
+                        ]),
+                        html.Div(id="pdf-export-status", className="mt-3")
+                    ])
+                ], className="shadow-sm border-0 mb-4", style={'borderRadius': '12px'})
+            ])
+        ]),
+        
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader(html.H5("📊 Exportar CSV", className="mb-0 text-white"), style={'backgroundColor': '#2ecc71'}),
+                    dbc.CardBody([
+                        dbc.Row([
+                            dbc.Col([
+                                html.Div([
+                                    html.H6("📈 Métricas de Fitness", className="mb-2"),
+                                    html.P("CTL, ATL, TSB e carga diária dos últimos 42 dias", className="text-muted small"),
+                                    dbc.Button(
+                                        [html.I(className="bi bi-download me-2"), "Baixar CSV"],
+                                        id="btn-export-metrics",
+                                        color="success",
+                                        className="w-100",
+                                        style={'borderRadius': '8px'}
+                                    )
+                                ])
+                            ], md=6, className="mb-3"),
+                            dbc.Col([
+                                html.Div([
+                                    html.H6("🏃 Atividades de Treino", className="mb-2"),
                                     html.P("Todas as atividades com distância, duração, TSS e modalidade", className="text-muted small"),
-                                    html.Hr(className="my-2"),
                                     dbc.Button(
                                         [html.I(className="bi bi-download me-2"), "Baixar CSV"],
                                         id="btn-export-workouts",
@@ -384,6 +423,8 @@ def create_export_section():
                         html.Hr(className="my-3"),
                         dcc.Download(id="download-metrics"),
                         dcc.Download(id="download-workouts"),
+                        dcc.Download(id="download-weekly-pdf"),
+                        dcc.Download(id="download-monthly-pdf"),
                         html.Div([
                             html.Small([
                                 "💡 ",
@@ -397,6 +438,145 @@ def create_export_section():
         ], className="mb-5")
     ]
 
+
+def create_advanced_analysis_section(workouts, config):
+    """Renderiza seção de Análise Avançada de Treinos"""
+    
+    # Nota: Esta seção mostra exemplos de análises que seriam possíveis
+    # com dados stream de potência e pace (quando disponíveis)
+    
+    return [
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    html.H3("💪 Análise Avançada de Treinos", className="mb-3 text-primary", style={'fontWeight': '700'}),
+                    html.P("Métricas profissionais para análise aprofundada de performance", className="text-muted mb-4", style={'fontSize': '0.95rem'})
+                ], className="text-center")
+            ])
+        ]),
+        
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader([
+                        html.H5("📊 Métricas Avançadas Disponíveis", className="mb-0")
+                    ]),
+                    dbc.CardBody([
+                        dbc.Row([
+                            # Ciclismo
+                            dbc.Col([
+                                html.Div([
+                                    html.H6([html.I(className="fas fa-bicycle me-2"), "Ciclismo"], className="text-primary mb-3"),
+                                    html.Ul([
+                                        html.Li([html.Strong("NP (Normalized Power): "), "Potência normalizada que considera a fadiga não-linear"]),
+                                        html.Li([html.Strong("IF (Intensity Factor): "), "Intensidade relativa ao FTP (NP/FTP)"]),
+                                        html.Li([html.Strong("VI (Variability Index): "), "Consistência do esforço (NP/Avg Power)"]),
+                                        html.Li([html.Strong("TSS Preciso: "), "Training Stress Score calculado com NP"]),
+                                        html.Li([html.Strong("Distribuição de Zonas: "), "Tempo gasto em cada zona de potência"]),
+                                        html.Li([html.Strong("Power Curve: "), "Picos de 5s, 1min, 5min, 20min"])
+                                    ], className="small")
+                                ], className="mb-4")
+                            ], md=4),
+                            
+                            # Corrida
+                            dbc.Col([
+                                html.Div([
+                                    html.H6([html.I(className="fas fa-running me-2"), "Corrida"], className="text-success mb-3"),
+                                    html.Ul([
+                                        html.Li([html.Strong("GAP (Grade Adjusted Pace): "), "Pace ajustado por elevação do terreno"]),
+                                        html.Li([html.Strong("Pace Variability: "), "Coeficiente de variação do pace (CV%)"]),
+                                        html.Li([html.Strong("Distribuição de Zonas: "), "Tempo em cada zona de pace"]),
+                                        html.Li([html.Strong("Consistência: "), "Análise de estabilidade do ritmo"]),
+                                        html.Li([html.Strong("Min/Max Pace: "), "Paces mais rápido e mais lento"]),
+                                        html.Li([html.Strong("Desvio Padrão: "), "Variação do pace durante o treino"])
+                                    ], className="small")
+                                ], className="mb-4")
+                            ], md=4),
+                            
+                            # Natação
+                            dbc.Col([
+                                html.Div([
+                                    html.H6([html.I(className="fas fa-swimmer me-2"), "Natação"], className="text-info mb-3"),
+                                    html.Ul([
+                                        html.Li([html.Strong("SWOLF: "), "Índice de eficiência técnica (braçadas + tempo)"]),
+                                        html.Li([html.Strong("Braçadas/25m: "), "Eficiência de braçada por piscina"]),
+                                        html.Li([html.Strong("Pace Consistency: "), "Consistência do pace por volta"]),
+                                        html.Li([html.Strong("Velocidade (m/s): "), "Velocidade média na água"]),
+                                        html.Li([html.Strong("DPS (Distance Per Stroke): "), "Distância por braçada"]),
+                                        html.Li([html.Strong("Stroke Rate: "), "Frequência de braçada (SPM)"])
+                                    ], className="small")
+                                ])
+                            ], md=4)
+                        ])
+                    ])
+                ], className="shadow-sm border-0 mb-4", style={'borderRadius': '12px'})
+            ])
+        ]),
+        
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardHeader([
+                        html.H5("📖 Guia de Interpretação", className="mb-0")
+                    ]),
+                    dbc.CardBody([
+                        dbc.Row([
+                            dbc.Col([
+                                html.H6("Intensity Factor (IF)", className="mb-2"),
+                                html.Ul([
+                                    html.Li([html.Strong("< 0.75: "), "Recuperação/Endurance"], className="small"),
+                                    html.Li([html.Strong("0.75-0.85: "), "Tempo"], className="small"),
+                                    html.Li([html.Strong("0.85-0.95: "), "Sweetspot"], className="small"),
+                                    html.Li([html.Strong("0.95-1.05: "), "Threshold"], className="small"),
+                                    html.Li([html.Strong("> 1.05: "), "VO2max+"], className="small")
+                                ])
+                            ], md=3),
+                            dbc.Col([
+                                html.H6("Variability Index (VI)", className="mb-2"),
+                                html.Ul([
+                                    html.Li([html.Strong("1.00-1.05: "), "Muito consistente (TT, indoor)"], className="small"),
+                                    html.Li([html.Strong("1.05-1.10: "), "Consistente"], className="small"),
+                                    html.Li([html.Strong("1.10-1.15: "), "Moderadamente variável"], className="small"),
+                                    html.Li([html.Strong("> 1.15: "), "Muito variável (critério, montanha)"], className="small")
+                                ])
+                            ], md=3),
+                            dbc.Col([
+                                html.H6("Pace Variability (CV%)", className="mb-2"),
+                                html.Ul([
+                                    html.Li([html.Strong("< 5%: "), "Muito consistente"], className="small"),
+                                    html.Li([html.Strong("5-10%: "), "Consistente"], className="small"),
+                                    html.Li([html.Strong("10-15%: "), "Moderadamente variável"], className="small"),
+                                    html.Li([html.Strong("> 15%: "), "Muito variável"], className="small")
+                                ])
+                            ], md=3),
+                            dbc.Col([
+                                html.H6("SWOLF (Natação)", className="mb-2"),
+                                html.Ul([
+                                    html.Li([html.Strong("< 35: "), "Excelente eficiência"], className="small"),
+                                    html.Li([html.Strong("35-40: "), "Boa eficiência"], className="small"),
+                                    html.Li([html.Strong("40-45: "), "Eficiência moderada"], className="small"),
+                                    html.Li([html.Strong("> 45: "), "Precisa melhorar técnica"], className="small")
+                                ])
+                            ], md=3)
+                        ])
+                    ])
+                ], className="shadow-sm border-0 mb-4", style={'borderRadius': '12px'})
+            ])
+        ]),
+        
+        dbc.Row([
+            dbc.Col([
+                dbc.Alert([
+                    html.I(className="fas fa-info-circle me-2"),
+                    html.Strong("Nota: "),
+                    "As análises avançadas requerem dados detalhados de stream (potência por segundo, pace por segundo, etc.) ",
+                    "que são obtidos quando disponíveis nas atividades do Garmin. O módulo ",
+                    html.Code("power_pace_analysis.py"),
+                    " está pronto para processar esses dados quando sincronizados."
+                ], color="info", className="mb-4")
+            ])
+        ])
+    ]
 
 def render_details(
     metrics,
@@ -434,6 +614,9 @@ def render_details(
         
         # Referências
         *create_references_section(),
+        
+        # Análise Avançada
+        *create_advanced_analysis_section(workouts, config),
         
         # Aprendizado
         *create_learning_section(),

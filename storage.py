@@ -82,6 +82,12 @@ def load_config() -> dict:
         "monthly_activities_goal": 20,
         "target_ctl": 50,
         "target_atl_max": 80,
+        # Configurações de Zonas de Treinamento
+        "swim_css": 120.0,  # Critical Swim Speed (segundos/100m)
+        "bike_ftp": 250,  # Functional Threshold Power (watts)
+        "run_lthr": 162,  # Lactate Threshold Heart Rate (bpm)
+        "run_threshold_pace": 4.37,  # Threshold pace (min/km)
+        "training_model": "polarized",  # polarized, pyramidal, threshold
     }
 
 

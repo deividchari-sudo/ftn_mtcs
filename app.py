@@ -317,6 +317,147 @@ def export_workouts_csv(n_clicks):
             return dict(content=csv_data, filename=f"workouts_{datetime.now().strftime('%Y%m%d')}.csv")
     return None
 
+# Callbacks para exportação de PDFs
+@app.callback(
+    [Output("download-weekly-pdf", "data"),
+     Output("pdf-export-status", "children")],
+    Input("btn-export-weekly-pdf", "n_clicks"),
+    prevent_initial_call=True
+)
+def export_weekly_pdf(n_clicks):
+    """Gera e exporta relatório semanal em PDF"""
+    if not n_clicks:
+        return None, ""
+    
+    try:
+        from pdf_reports import create_weekly_report, get_default_output_dir, generate_filename
+        
+        # Definir período (últimos 7 dias)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        
+        # Carregar dados
+        workouts = enrich_workouts_with_tss(load_workouts())
+        metrics = load_metrics()
+        config = load_config()
+        
+        # Filtrar workouts da semana
+        weekly_workouts = []
+        for w in workouts:
+            try:
+                w_date_str = w.get('startTimeLocal', '')[:10]
+                w_date = datetime.strptime(w_date_str, '%Y-%m-%d')
+                if start_date <= w_date <= end_date:
+                    weekly_workouts.append(w)
+            except:
+                continue
+        
+        # Gerar PDF
+        output_dir = get_default_output_dir()
+        filename = generate_filename('semanal', start_date, end_date)
+        output_path = str(output_dir / filename)
+        
+        create_weekly_report(
+            workouts=weekly_workouts,
+            metrics=metrics,
+            config=config,
+            start_date=start_date,
+            end_date=end_date,
+            output_path=output_path
+        )
+        
+        # Retornar arquivo para download
+        with open(output_path, 'rb') as f:
+            pdf_content = f.read()
+        
+        success_msg = html.Div([
+            html.I(className="fas fa-check-circle me-2"),
+            f"✅ Relatório semanal gerado com sucesso! ({len(weekly_workouts)} treinos)"
+        ], className="alert alert-success")
+        
+        return dict(content=pdf_content, filename=filename), success_msg
+        
+    except Exception as e:
+        error_msg = html.Div([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            f"❌ Erro ao gerar PDF: {str(e)}"
+        ], className="alert alert-danger")
+        return None, error_msg
+
+@app.callback(
+    [Output("download-monthly-pdf", "data"),
+     Output("pdf-export-status", "children", allow_duplicate=True)],
+    Input("btn-export-monthly-pdf", "n_clicks"),
+    prevent_initial_call=True
+)
+def export_monthly_pdf(n_clicks):
+    """Gera e exporta relatório mensal em PDF"""
+    if not n_clicks:
+        return None, ""
+    
+    try:
+        from pdf_reports import create_monthly_report, get_default_output_dir, generate_filename
+        
+        # Definir período (mês atual)
+        now = datetime.now()
+        month = now.month
+        year = now.year
+        
+        # Primeiro e último dia do mês
+        start_date = datetime(year, month, 1)
+        if month == 12:
+            end_date = datetime(year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end_date = datetime(year, month + 1, 1) - timedelta(days=1)
+        
+        # Carregar dados
+        workouts = enrich_workouts_with_tss(load_workouts())
+        metrics = load_metrics()
+        config = load_config()
+        
+        # Filtrar workouts do mês
+        monthly_workouts = []
+        for w in workouts:
+            try:
+                w_date_str = w.get('startTimeLocal', '')[:10]
+                w_date = datetime.strptime(w_date_str, '%Y-%m-%d')
+                if start_date <= w_date <= end_date:
+                    monthly_workouts.append(w)
+            except:
+                continue
+        
+        # Gerar PDF
+        output_dir = get_default_output_dir()
+        filename = generate_filename('mensal', start_date)
+        output_path = str(output_dir / filename)
+        
+        create_monthly_report(
+            workouts=monthly_workouts,
+            metrics=metrics,
+            config=config,
+            month=month,
+            year=year,
+            output_path=output_path
+        )
+        
+        # Retornar arquivo para download
+        with open(output_path, 'rb') as f:
+            pdf_content = f.read()
+        
+        success_msg = html.Div([
+            html.I(className="fas fa-check-circle me-2"),
+            f"✅ Relatório mensal gerado com sucesso! ({len(monthly_workouts)} treinos)"
+        ], className="alert alert-success")
+        
+        return dict(content=pdf_content, filename=filename), success_msg
+        
+    except Exception as e:
+        error_msg = html.Div([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            f"❌ Erro ao gerar PDF: {str(e)}"
+        ], className="alert alert-danger")
+        return None, error_msg
+
 # Função auxiliar para calcular resumo semanal
 def calculate_weekly_summary():
     """Calcula resumo da semana atual (segunda a domingo)"""
@@ -3510,7 +3651,40 @@ def render_goals():
                     ], md=6)
                 ])
             ])
-        ])
+        ]),
+        
+        # Predição de Tempo de Prova
+        dbc.Card([
+            dbc.CardHeader(html.H4("🏁 Predição de Tempo de Prova", className="mb-0")),
+            dbc.CardBody([
+                html.P("Estime seus tempos de prova baseados nas suas métricas atuais e treinos recentes.", className="text-muted mb-4"),
+                
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Label("Tipo de Prova"),
+                        dbc.Select(
+                            id="race-type-select",
+                            options=[
+                                {"label": "🏃 Sprint (750m / 20km / 5km)", "value": "sprint"},
+                                {"label": "🏊 Olímpico (1.5km / 40km / 10km)", "value": "olympic"},
+                                {"label": "💪 Half Ironman 70.3 (1.9km / 90km / 21km)", "value": "half_ironman"},
+                                {"label": "🏆 Ironman (3.8km / 180km / 42km)", "value": "ironman"}
+                            ],
+                            value="olympic"
+                        )
+                    ], md=6),
+                    dbc.Col([
+                        dbc.Label("Elevação do Ciclismo (metros)"),
+                        dbc.Input(id="race-elevation", type="number", value=500, min=0, max=3000, step=100),
+                        html.Small("Ganho de elevação acumulado no percurso de bike", className="text-muted")
+                    ], md=6)
+                ], className="mb-3"),
+                
+                dbc.Button("🔮 Calcular Predição", id="predict-race-btn", color="primary", size="lg", className="w-100 mb-3"),
+                
+                html.Div(id="race-prediction-output")
+            ])
+        ], className="mb-4")
     ])
 
 def render_config():
@@ -3600,6 +3774,79 @@ def render_config():
                         dbc.Button("💾 Salvar Configurações", id="save-config-btn", color="success", className="mt-3")
                     ])
                 ], className="mb-4"),
+                
+                # Zonas de Treinamento
+                dbc.Card([
+                    dbc.CardHeader("🎯 Zonas de Treinamento"),
+                    dbc.CardBody([
+                        html.P("Configure suas zonas de treinamento para natação, ciclismo e corrida. Essas zonas serão usadas para análise de intensidade.", className="text-muted mb-3"),
+                        
+                        # Natação
+                        html.H5("🏊 Natação", className="mt-3 mb-3"),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Label("CSS (Critical Swim Speed) - segundos/100m"),
+                                dbc.Input(id="config-swim-css", type="number", value=config.get("swim_css", 120.0), min=60, max=300, step=1),
+                                html.Small("Seu pace de threshold em piscina (T-pace)", className="text-muted")
+                            ], md=6)
+                        ]),
+                        
+                        # Ciclismo
+                        html.H5("🚴 Ciclismo", className="mt-4 mb-3"),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Label("FTP (Functional Threshold Power) - watts"),
+                                dbc.Input(id="config-bike-ftp", type="number", value=config.get("bike_ftp", 250), min=50, max=500, step=5),
+                                html.Small("Potência sustentável por 1 hora", className="text-muted")
+                            ], md=6)
+                        ]),
+                        
+                        # Corrida
+                        html.H5("🏃 Corrida", className="mt-4 mb-3"),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Label("LTHR (Lactate Threshold HR) - bpm"),
+                                dbc.Input(id="config-run-lthr", type="number", value=config.get("run_lthr", 162), min=100, max=200),
+                                html.Small("FC no limiar anaeróbico", className="text-muted")
+                            ], md=6),
+                            dbc.Col([
+                                dbc.Label("Threshold Pace - min/km"),
+                                dbc.Input(id="config-run-threshold-pace", type="number", value=config.get("run_threshold_pace", 4.37), min=2.5, max=10, step=0.01),
+                                html.Small("Pace sustentável por ~1 hora", className="text-muted")
+                            ], md=6)
+                        ]),
+                        
+                        # Modelo de Treinamento
+                        html.H5("📊 Modelo de Treinamento", className="mt-4 mb-3"),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Label("Modelo de Distribuição de Zonas"),
+                                dbc.Select(
+                                    id="config-training-model",
+                                    value=config.get("training_model", "polarized"),
+                                    options=[
+                                        {"label": "🎯 Polarizado (75% Z1-Z2 / 5-10% Z3 / 15-20% Z4-Z5)", "value": "polarized"},
+                                        {"label": "🔺 Piramidal (70-75% Z1-Z2 / 15-20% Z3 / 10-15% Z4-Z5)", "value": "pyramidal"},
+                                        {"label": "⚡ Threshold (60-65% Z1-Z2 / 25-30% Z3 / 10-15% Z4-Z5)", "value": "threshold"}
+                                    ]
+                                ),
+                                html.Small("Define o modelo ideal de distribuição de intensidades", className="text-muted")
+                            ], md=12)
+                        ]),
+                        
+                        dbc.Button("💾 Salvar Zonas de Treinamento", id="save-zones-btn", color="success", className="mt-3 me-2"),
+                        dbc.Button("📊 Ver Minhas Zonas", id="view-zones-btn", color="info", className="mt-3")
+                    ])
+                ], className="mb-4"),
+                
+                # Modal para exibir zonas calculadas
+                dbc.Modal([
+                    dbc.ModalHeader("🎯 Suas Zonas de Treinamento"),
+                    dbc.ModalBody(id="zones-modal-content"),
+                    dbc.ModalFooter(
+                        dbc.Button("Fechar", id="close-zones-modal", color="secondary")
+                    )
+                ], id="zones-modal", size="xl", is_open=False),
                 
                 # Atualização de Dados
                 dbc.Card([
@@ -4598,6 +4845,375 @@ def handle_update_reset(update_clicks, reset_clicks):
             return html.Div(f"❌ Erro ao reiniciar dados: {str(e)}", className="alert alert-danger mt-3")
     
     return html.Div()
+
+# Callback para salvar zonas de treinamento
+@app.callback(
+    Output('config-status', 'children', allow_duplicate=True),
+    Input('save-zones-btn', 'n_clicks'),
+    [State('config-swim-css', 'value'),
+     State('config-bike-ftp', 'value'),
+     State('config-run-lthr', 'value'),
+     State('config-run-threshold-pace', 'value'),
+     State('config-training-model', 'value')],
+    prevent_initial_call=True
+)
+def save_training_zones(n_clicks, swim_css, bike_ftp, run_lthr, run_threshold_pace, training_model):
+    """Salva configurações de zonas de treinamento"""
+    if not n_clicks:
+        return dash.no_update
+    
+    try:
+        config = load_config()
+        config['swim_css'] = float(swim_css) if swim_css else 120.0
+        config['bike_ftp'] = int(bike_ftp) if bike_ftp else 250
+        config['run_lthr'] = int(run_lthr) if run_lthr else 162
+        config['run_threshold_pace'] = float(run_threshold_pace) if run_threshold_pace else 4.37
+        config['training_model'] = training_model if training_model else 'polarized'
+        
+        save_config(config)
+        
+        return html.Div([
+            html.I(className="fas fa-check-circle me-2"),
+            "Zonas de treinamento salvas com sucesso!"
+        ], className="alert alert-success mt-3")
+    except Exception as e:
+        return html.Div([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            f"Erro ao salvar zonas: {str(e)}"
+        ], className="alert alert-danger mt-3")
+
+# Callback para abrir/fechar modal de zonas
+@app.callback(
+    Output('zones-modal', 'is_open'),
+    [Input('view-zones-btn', 'n_clicks'),
+     Input('close-zones-modal', 'n_clicks')],
+    State('zones-modal', 'is_open'),
+    prevent_initial_call=True
+)
+def toggle_zones_modal(view_clicks, close_clicks, is_open):
+    """Controla abertura/fechamento do modal de zonas"""
+    return not is_open
+
+# Callback para popular conteúdo do modal de zonas
+@app.callback(
+    Output('zones-modal-content', 'children'),
+    Input('view-zones-btn', 'n_clicks'),
+    prevent_initial_call=True
+)
+def populate_zones_modal(n_clicks):
+    """Calcula e exibe as zonas de treinamento configuradas"""
+    if not n_clicks:
+        return dash.no_update
+    
+    try:
+        from training_zones import (
+            calculate_swim_zones, calculate_bike_zones, calculate_run_zones,
+            SWIMMING_ZONES, CYCLING_ZONES, RUNNING_ZONES
+        )
+        
+        config = load_config()
+        
+        # Calcular zonas
+        swim_zones = calculate_swim_zones(config.get('swim_css', 120.0))
+        bike_zones = calculate_bike_zones(config.get('bike_ftp', 250))
+        run_zones = calculate_run_zones(
+            config.get('run_lthr', 162),
+            config.get('run_threshold_pace', 4.37)
+        )
+        
+        # Modelo de treinamento
+        training_model = config.get('training_model', 'polarized')
+        model_descriptions = {
+            'polarized': '🎯 Polarizado: 75-80% baixa intensidade (Z1-Z2), 5-10% moderada (Z3), 15-20% alta (Z4-Z5)',
+            'pyramidal': '🔺 Piramidal: 70-75% baixa intensidade (Z1-Z2), 15-20% moderada (Z3), 10-15% alta (Z4-Z5)',
+            'threshold': '⚡ Threshold: 60-65% baixa intensidade (Z1-Z2), 25-30% moderada (Z3), 10-15% alta (Z4-Z5)'
+        }
+        
+        return html.Div([
+            # Modelo de Treinamento
+            dbc.Alert([
+                html.H5(f"📊 Modelo de Treinamento: {training_model.capitalize()}", className="mb-2"),
+                html.P(model_descriptions.get(training_model, ''), className="mb-0")
+            ], color="info", className="mb-4"),
+            
+            # Natação
+            html.H4("🏊 Zonas de Natação", className="mb-3"),
+            dbc.Table([
+                html.Thead([
+                    html.Tr([
+                        html.Th("Zona"),
+                        html.Th("Nome"),
+                        html.Th("Pace (s/100m)"),
+                        html.Th("% CSS"),
+                        html.Th("Descrição")
+                    ])
+                ]),
+                html.Tbody([
+                    html.Tr([
+                        html.Td(html.Span("●", style={'color': zone['color'], 'fontSize': '20px'})),
+                        html.Td(html.Strong(zone['name'])),
+                        html.Td(zone['pace_display']),
+                        html.Td(f"{SWIMMING_ZONES[zone_id]['css_percent'][0]}-{SWIMMING_ZONES[zone_id]['css_percent'][1]}%"),
+                        html.Td(zone['description'], style={'fontSize': '0.9em'})
+                    ]) for zone_id, zone in swim_zones.items()
+                ])
+            ], bordered=True, hover=True, className="mb-4"),
+            
+            # Ciclismo
+            html.H4("🚴 Zonas de Ciclismo", className="mb-3 mt-4"),
+            dbc.Table([
+                html.Thead([
+                    html.Tr([
+                        html.Th("Zona"),
+                        html.Th("Nome"),
+                        html.Th("Potência (W)"),
+                        html.Th("% FTP"),
+                        html.Th("Descrição")
+                    ])
+                ]),
+                html.Tbody([
+                    html.Tr([
+                        html.Td(html.Span("●", style={'color': zone['color'], 'fontSize': '20px'})),
+                        html.Td(html.Strong(zone['name'])),
+                        html.Td(zone['power_display']),
+                        html.Td(f"{CYCLING_ZONES[zone_id]['ftp_percent'][0]}-{CYCLING_ZONES[zone_id]['ftp_percent'][1]}%"),
+                        html.Td(zone['description'], style={'fontSize': '0.9em'})
+                    ]) for zone_id, zone in bike_zones.items()
+                ])
+            ], bordered=True, hover=True, className="mb-4"),
+            
+            # Corrida
+            html.H4("🏃 Zonas de Corrida", className="mb-3 mt-4"),
+            dbc.Table([
+                html.Thead([
+                    html.Tr([
+                        html.Th("Zona"),
+                        html.Th("Nome"),
+                        html.Th("FC (bpm)"),
+                        html.Th("Pace (min/km)"),
+                        html.Th("Descrição")
+                    ])
+                ]),
+                html.Tbody([
+                    html.Tr([
+                        html.Td(html.Span("●", style={'color': zone['color'], 'fontSize': '20px'})),
+                        html.Td(html.Strong(zone['name'])),
+                        html.Td(zone['hr_display']),
+                        html.Td(zone.get('pace_display', 'N/A')),
+                        html.Td(zone['description'], style={'fontSize': '0.9em'})
+                    ]) for zone_id, zone in run_zones.items()
+                ])
+            ], bordered=True, hover=True, className="mb-4"),
+            
+            html.Hr(),
+            html.P([
+                html.Strong("💡 Dica: "),
+                "Use estas zonas como referência para planejar seus treinos e monitorar a distribuição de intensidades. ",
+                "O modelo ", html.Strong(training_model.capitalize()), " é o ideal para você seguir."
+            ], className="text-muted")
+        ])
+        
+    except Exception as e:
+        return html.Div([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            f"Erro ao calcular zonas: {str(e)}"
+        ], className="alert alert-danger")
+
+# Callback para predição de tempo de prova
+@app.callback(
+    Output('race-prediction-output', 'children'),
+    Input('predict-race-btn', 'n_clicks'),
+    [State('race-type-select', 'value'),
+     State('race-elevation', 'value')],
+    prevent_initial_call=True
+)
+def calculate_race_prediction(n_clicks, race_type, elevation):
+    """Calcula predição de tempo de prova de triathlon"""
+    if not n_clicks:
+        return dash.no_update
+    
+    try:
+        from race_predictor import predict_triathlon_time, analyze_race_readiness, format_time_seconds
+        
+        # Carregar dados
+        config = load_config()
+        workouts = enrich_workouts_with_tss(load_workouts())
+        metrics = load_metrics()
+        
+        # Obter métricas atuais (metrics é uma lista, pegar o último item)
+        if metrics and isinstance(metrics, list) and len(metrics) > 0:
+            latest_metrics = metrics[-1]
+            current_ctl = latest_metrics.get('ctl', 0.0)
+        else:
+            current_ctl = 0.0
+        
+        # Parâmetros do usuário
+        css = config.get('swim_css', 120.0)
+        ftp = config.get('bike_ftp', 250)
+        threshold_pace = config.get('run_threshold_pace', 4.37)
+        vo2max = config.get('vo2max', None)  # Opcional
+        
+        # Calcular predição
+        prediction = predict_triathlon_time(
+            race_type=race_type,
+            css=css,
+            ftp=ftp,
+            threshold_pace=threshold_pace,
+            vo2max=vo2max,
+            recent_workouts=workouts,
+            elevation_gain=elevation or 0
+        )
+        
+        # Analisar prontidão
+        readiness = analyze_race_readiness(
+            target_race=race_type,
+            current_ctl=current_ctl,
+            recent_workouts=workouts
+        )
+        
+        # Criar interface de resultados
+        return html.Div([
+            # Status de prontidão
+            dbc.Alert([
+                html.H5(readiness['message'], className="mb-2"),
+                html.P([
+                    f"CTL Atual: {readiness['current_ctl']:.1f} | ",
+                    f"CTL Alvo: {readiness['target_ctl']:.1f}"
+                ], className="mb-2"),
+                html.Ul([html.Li(rec) for rec in readiness['recommendations']]) if readiness['recommendations'] else None
+            ], color='success' if readiness['status'] == 'ready' else 'warning' if readiness['status'] == 'almost_ready' else 'danger', className="mb-4"),
+            
+            # Tempo total previsto
+            dbc.Card([
+                dbc.CardHeader(html.H4([
+                    "🏁 ", prediction['race_name'],
+                    html.Span(f" ({prediction['distances']['swim_m']}m / {prediction['distances']['bike_km']:.0f}km / {prediction['distances']['run_km']:.1f}km)",
+                             className="text-muted small ms-2")
+                ], className="mb-0")),
+                dbc.CardBody([
+                    dbc.Row([
+                        dbc.Col([
+                            html.Div([
+                                html.H6("Conservador", className="text-center text-muted"),
+                                html.H3(prediction['conservative']['total_formatted'], className="text-center text-secondary")
+                            ], className="p-3 border rounded")
+                        ], md=4),
+                        dbc.Col([
+                            html.Div([
+                                html.H6("Realístico", className="text-center text-primary"),
+                                html.H2(prediction['predicted_total_formatted'], className="text-center text-primary font-weight-bold")
+                            ], className="p-3 border rounded", style={'backgroundColor': '#e3f2fd'})
+                        ], md=4),
+                        dbc.Col([
+                            html.Div([
+                                html.H6("Otimista", className="text-center text-muted"),
+                                html.H3(prediction['optimistic']['total_formatted'], className="text-center text-success")
+                            ], className="p-3 border rounded")
+                        ], md=4)
+                    ])
+                ])
+            ], className="mb-4"),
+            
+            # Splits detalhados
+            dbc.Card([
+                dbc.CardHeader("📊 Splits Detalhados"),
+                dbc.CardBody([
+                    dbc.Table([
+                        html.Thead([
+                            html.Tr([
+                                html.Th("Etapa"),
+                                html.Th("Distância"),
+                                html.Th("Tempo Previsto"),
+                                html.Th("Pace/Velocidade"),
+                                html.Th("% Total")
+                            ])
+                        ]),
+                        html.Tbody([
+                            # Natação
+                            html.Tr([
+                                html.Td([html.I(className="fas fa-swimmer me-2"), "Natação"]),
+                                html.Td(f"{prediction['distances']['swim_m']}m"),
+                                html.Td(html.Strong(prediction['swim']['predicted_time_formatted'])),
+                                html.Td(prediction['swim']['predicted_pace_formatted']),
+                                html.Td(f"{prediction['splits']['swim_percent']:.1f}%")
+                            ]),
+                            # Ciclismo
+                            html.Tr([
+                                html.Td([html.I(className="fas fa-bicycle me-2"), "Ciclismo"]),
+                                html.Td(f"{prediction['distances']['bike_km']:.0f}km"),
+                                html.Td(html.Strong(prediction['bike']['predicted_time_formatted'])),
+                                html.Td(f"{prediction['bike']['predicted_speed_kmh']:.1f} km/h ({prediction['bike']['target_power_watts']:.0f}W)"),
+                                html.Td(f"{prediction['splits']['bike_percent']:.1f}%")
+                            ]),
+                            # Corrida
+                            html.Tr([
+                                html.Td([html.I(className="fas fa-running me-2"), "Corrida"]),
+                                html.Td(f"{prediction['distances']['run_km']:.1f}km"),
+                                html.Td(html.Strong(prediction['run']['predicted_time_formatted'])),
+                                html.Td(prediction['run']['predicted_pace_formatted']),
+                                html.Td(f"{prediction['splits']['run_percent']:.1f}%")
+                            ]),
+                            # Transições
+                            html.Tr([
+                                html.Td([html.I(className="fas fa-exchange-alt me-2"), "Transições"]),
+                                html.Td("T1 + T2"),
+                                html.Td(format_time_seconds(prediction['transitions_seconds'])),
+                                html.Td("-"),
+                                html.Td(f"{prediction['splits']['transitions_percent']:.1f}%")
+                            ], className="table-secondary")
+                        ])
+                    ], bordered=True, hover=True, striped=True)
+                ])
+            ], className="mb-4"),
+            
+            # Paces de referência
+            dbc.Card([
+                dbc.CardHeader("🎯 Paces de Referência para a Prova"),
+                dbc.CardBody([
+                    dbc.Row([
+                        dbc.Col([
+                            html.H6("🏊 Natação"),
+                            html.P([
+                                html.Strong("Meta: "), prediction['swim']['predicted_pace_formatted'], html.Br(),
+                                "Conservador: ", prediction['swim']['conservative']['pace_formatted'], html.Br(),
+                                "Otimista: ", prediction['swim']['optimistic']['pace_formatted']
+                            ], className="small")
+                        ], md=4),
+                        dbc.Col([
+                            html.H6("🚴 Ciclismo"),
+                            html.P([
+                                html.Strong("Meta: "), f"{prediction['bike']['predicted_speed_kmh']:.1f} km/h", html.Br(),
+                                f"Potência: {prediction['bike']['target_power_watts']:.0f}W ({prediction['bike']['target_power_percent_ftp']:.0f}% FTP)", html.Br(),
+                                f"Conservador: {prediction['bike']['conservative']['speed_kmh']:.1f} km/h", html.Br(),
+                                f"Otimista: {prediction['bike']['optimistic']['speed_kmh']:.1f} km/h"
+                            ], className="small")
+                        ], md=4),
+                        dbc.Col([
+                            html.H6("🏃 Corrida"),
+                            html.P([
+                                html.Strong("Meta: "), prediction['run']['predicted_pace_formatted'], html.Br(),
+                                "Conservador: ", prediction['run']['conservative']['pace_formatted'], html.Br(),
+                                "Otimista: ", prediction['run']['optimistic']['pace_formatted']
+                            ], className="small")
+                        ], md=4)
+                    ])
+                ])
+            ]),
+            
+            html.Hr(className="my-4"),
+            html.P([
+                html.I(className="fas fa-info-circle me-2"),
+                html.Strong("Nota: "),
+                "Esta predição é baseada em fórmulas científicas (Riegel, FTP, CSS) e seus treinos recentes. ",
+                "Fatores como condições climáticas, percurso técnico e estratégia de prova podem afetar o resultado real."
+            ], className="text-muted small")
+        ])
+        
+    except Exception as e:
+        return html.Div([
+            html.I(className="fas fa-exclamation-triangle me-2"),
+            f"Erro ao calcular predição: {str(e)}"
+        ], className="alert alert-danger")
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8050)
