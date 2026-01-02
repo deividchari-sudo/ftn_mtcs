@@ -23,6 +23,9 @@ CREDENTIALS_FILE = DATA_DIR / "garmin_credentials.json"
 METRICS_FILE = DATA_DIR / "fitness_metrics.json"
 WORKOUTS_FILE = DATA_DIR / "workouts_42_dias.json"
 SYNC_FILE = DATA_DIR / "sync_state.json"
+HEALTH_DATA_FILE = DATA_DIR / "health_metrics.json"
+TRAINING_STATUS_FILE = DATA_DIR / "training_status.json"
+EXERCISES_FILE = DATA_DIR / "exercises.json"
 
 
 def _try_secure_file(path: Path) -> None:
@@ -196,3 +199,64 @@ def save_workouts(workouts: list) -> None:
     with open(WORKOUTS_FILE, "w") as f:
         json.dump(workouts, f, indent=4)
     _try_secure_file(WORKOUTS_FILE)
+
+
+# === DADOS DE SAÚDE (Health Metrics) ===
+
+def load_health_metrics() -> dict:
+    """Carrega dados de saúde (HRV, Stress, Sleep, VO2, Composição Corporal)"""
+    if HEALTH_DATA_FILE.exists():
+        try:
+            with open(HEALTH_DATA_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_health_metrics(health_data: dict) -> None:
+    """Salva dados de saúde agregados"""
+    with open(HEALTH_DATA_FILE, "w") as f:
+        json.dump(health_data, f, indent=4)
+    _try_secure_file(HEALTH_DATA_FILE)
+
+
+# === TRAINING STATUS ===
+
+def load_training_status() -> dict:
+    """Carrega últimos dados de training status"""
+    if TRAINING_STATUS_FILE.exists():
+        try:
+            with open(TRAINING_STATUS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_training_status(status_data: dict) -> None:
+    """Salva training status do Garmin"""
+    with open(TRAINING_STATUS_FILE, "w") as f:
+        json.dump(status_data, f, indent=4)
+    _try_secure_file(TRAINING_STATUS_FILE)
+
+
+# === EXERCÍCIOS (Exercises) ===
+
+def load_exercises() -> dict:
+    """Carrega histórico de exercícios (por activity_id)"""
+    if EXERCISES_FILE.exists():
+        try:
+            with open(EXERCISES_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_exercises(exercises_data: dict) -> None:
+    """Salva histórico de exercícios"""
+    with open(EXERCISES_FILE, "w") as f:
+        json.dump(exercises_data, f, indent=4)
+    _try_secure_file(EXERCISES_FILE)
+

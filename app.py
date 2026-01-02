@@ -10,7 +10,10 @@ import calendar
 from utils import format_hours_decimal
 from ai_chat import FitnessAI
 from details_page import render_details
+from wellness_page import render_wellness
 from calculations import compute_tss_variants, calculate_fitness_metrics, _activity_category
+from cache_manager import get_cached, set_cached, invalidate_type
+from garmin_enhanced import GarminEnhanced
 from storage import (
     METRICS_FILE, WORKOUTS_FILE, load_config, save_config,
     load_credentials, save_credentials,
@@ -245,6 +248,7 @@ app.layout = html.Div(id='app-container', children=[
         dbc.Tab(label="📊 Dashboard", tab_id="dashboard"),
         dbc.Tab(label="📅 Calendário", tab_id="calendar"),
         dbc.Tab(label="🎯 Metas", tab_id="goals"),
+        dbc.Tab(label="❤️ Saúde & Wellness", tab_id="wellness"),
         dbc.Tab(label="🤖 AI Chat", tab_id="ai_chat"),
         dbc.Tab(label="📋 Mais Detalhes", tab_id="details"),
         dbc.Tab(label="⚙️ Configuração", tab_id="config")
@@ -267,6 +271,8 @@ def render_tab_content(active_tab):
         return render_calendar()
     elif active_tab == "goals":
         return render_goals()
+    elif active_tab == "wellness":
+        return render_wellness()
     elif active_tab == "ai_chat":
         return render_ai_chat()
     elif active_tab == "details":
@@ -3769,6 +3775,171 @@ def calculate_goals_progress(activities, config):
         'current_atl': current_atl
     }
 
+# Funções auxiliares para buscar dados de saúde e training status
+def fetch_health_and_training_data(client, enhanced_client, config):
+    """
+    Busca dados de saúde e training status do Garmin.
+    Usa cache para evitar requisições excessivas.
+    
+    Args:
+        client: Cliente Garmin padrão
+        enhanced_client: Cliente Garmin enriquecido
+        config: Config do usuário
+    
+    Returns:
+        Dict com todos os dados de saúde e training status
+    """
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=42)
+    
+    health_data = {
+        'timestamp': datetime.now().isoformat(),
+        'hrv': {},
+        'stress': {},
+        'sleep': {},
+        'vo2_max': None,
+        'body_composition': {}
+    }
+    
+    training_data = {
+        'timestamp': datetime.now().isoformat(),
+        'training_status': {},
+        'daily_training_status': {},
+        'performance_metrics': {}
+    }
+    
+    try:
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # === HEALTH METRICS (últimos 42 dias) ===
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=42)
+        
+        # HRV - coletar últimos 7 dias (dados podem ser limitados)
+        hrv_data = {}
+        logger.info("[HEALTH] Iniciando coleta de HRV (7 dias)...")
+        for i in range(7):
+            date = end_date - timedelta(days=i)
+            try:
+                hrv = enhanced_client.get_heart_rate_variability(date)
+                if hrv:
+                    hrv_data[date.isoformat()] = hrv
+                    logger.info(f"[HEALTH] HRV {date.isoformat()}: OK")
+            except Exception as e:
+                logger.warning(f"[HEALTH] HRV {date.isoformat()}: {e}")
+        if hrv_data:
+            health_data['hrv'] = hrv_data
+            logger.info(f"[HEALTH] HRV: Salvo {len(hrv_data)} dias")
+        else:
+            logger.warning("[HEALTH] HRV: Nenhum dado coletado")
+        
+        # Stress Data - últimos 7 dias
+        stress_data = {}
+        logger.info("[HEALTH] Iniciando coleta de Stress (7 dias)...")
+        for i in range(7):
+            date = end_date - timedelta(days=i)
+            try:
+                stress = enhanced_client.get_stress_data(date)
+                if stress:
+                    stress_data[date.isoformat()] = stress
+                    logger.info(f"[HEALTH] Stress {date.isoformat()}: OK")
+            except Exception as e:
+                logger.warning(f"[HEALTH] Stress {date.isoformat()}: {e}")
+        if stress_data:
+            health_data['stress'] = stress_data
+            logger.info(f"[HEALTH] Stress: Salvo {len(stress_data)} dias")
+        else:
+            logger.warning("[HEALTH] Stress: Nenhum dado coletado")
+        
+        # Sleep Data - últimos 7 dias
+        sleep_data = {}
+        logger.info("[HEALTH] Iniciando coleta de Sleep (7 dias)...")
+        for i in range(7):
+            date = end_date - timedelta(days=i)
+            try:
+                sleep = enhanced_client.get_sleep_data(date)
+                if sleep:
+                    sleep_data[date.isoformat()] = sleep
+                    logger.info(f"[HEALTH] Sleep {date.isoformat()}: OK")
+            except Exception as e:
+                logger.warning(f"[HEALTH] Sleep {date.isoformat()}: {e}")
+        if sleep_data:
+            health_data['sleep'] = sleep_data
+            logger.info(f"[HEALTH] Sleep: Salvo {len(sleep_data)} dias")
+        else:
+            logger.warning("[HEALTH] Sleep: Nenhum dado coletado")
+        
+        # VO2 Max
+        logger.info("[HEALTH] Iniciando coleta de VO2 Max...")
+        try:
+            vo2 = enhanced_client.get_vo2_max_estimate()
+            if vo2:
+                health_data['vo2_max'] = vo2
+                logger.info(f"[HEALTH] VO2 Max: OK")
+            else:
+                logger.warning("[HEALTH] VO2 Max: Sem dados")
+        except Exception as e:
+            logger.warning(f"[HEALTH] VO2 Max: {e}")
+        
+        # Body Composition
+        logger.info("[HEALTH] Iniciando coleta de Body Composition...")
+        try:
+            body_comp = enhanced_client.get_body_composition()
+            if body_comp:
+                health_data['body_composition'] = body_comp
+                logger.info(f"[HEALTH] Body Composition: OK")
+            else:
+                logger.warning("[HEALTH] Body Composition: Sem dados")
+        except Exception as e:
+            logger.warning(f"[HEALTH] Body Composition: {e}")
+        
+        # === TRAINING STATUS ===
+        logger.info("[TRAINING] Iniciando coleta de Training Status...")
+        
+        # Training Status do dia
+        try:
+            training_status = enhanced_client.get_training_status()
+            if training_status:
+                training_data['training_status'] = training_status
+                logger.info("[TRAINING] Training Status: OK")
+            else:
+                logger.warning("[TRAINING] Training Status: Sem dados")
+        except Exception as e:
+            logger.warning(f"[TRAINING] Training Status: {e}")
+        
+        # Daily Training Status
+        try:
+            daily_status = enhanced_client.get_daily_training_status()
+            if daily_status:
+                training_data['daily_training_status'] = daily_status
+                logger.info("[TRAINING] Daily Training Status: OK")
+            else:
+                logger.warning("[TRAINING] Daily Training Status: Sem dados")
+        except Exception as e:
+            logger.warning(f"[TRAINING] Daily Training Status: {e}")
+        
+        # Performance Metrics
+        try:
+            perf = enhanced_client.get_performance_metrics()
+            if perf:
+                training_data['performance_metrics'] = perf
+                logger.info("[TRAINING] Performance Metrics: OK")
+            else:
+                logger.warning("[TRAINING] Performance Metrics: Sem dados")
+        except Exception as e:
+            logger.warning(f"[TRAINING] Performance Metrics: {e}")
+        
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"[FATAL] Erro crítico ao buscar dados de saúde/training: {e}", exc_info=True)
+    
+    return {
+        'health': health_data,
+        'training': training_data
+    }
+
 def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
     """Busca dados do Garmin Connect com lógica inteligente de atualização
     
@@ -3904,6 +4075,20 @@ def fetch_garmin_data(email=None, password=None, config=None, use_tokens=True):
             save_sync_state(state)
         except Exception:
             pass
+
+        # ========== BUSCAR DADOS DE SAÚDE E TRAINING STATUS ==========
+        try:
+            enhanced_client = GarminEnhanced(client)
+            health_training_data = fetch_health_and_training_data(client, enhanced_client, config)
+            
+            # Salvar dados de saúde
+            from storage import save_health_metrics, save_training_status
+            save_health_metrics(health_training_data['health'])
+            save_training_status(health_training_data['training'])
+        except Exception as e:
+            import logging
+            logging.warning(f"Aviso: Falha ao buscar dados de saúde/training: {e}")
+            # Não falhar sincronização se saúde falhar - atividades já foram atualizadas
 
         new_count = len(new_activities)
         total_count = len(all_activities)

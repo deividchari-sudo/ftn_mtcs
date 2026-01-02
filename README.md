@@ -13,7 +13,10 @@ Este aplicativo Dash permite que atletas monitorem seu estado de forma física a
 - **🔄 Sincronização Garmin**: Importe automaticamente atividades dos últimos 42 dias
 - **📅 Calendário de Treinos**: Veja seu histórico de atividades em formato de calendário
 - **🎯 Metas Personalizáveis**: Configure e acompanhe metas semanais e mensais
+- **❤️ Métricas Avançadas de Saúde**: HRV, Stress, Sleep, VO2 Max e Composição Corporal
+- **🧠 Status de Treino**: Acompanhe seu status diário (Overreaching, High, Balanced, Low, Detraining)
 - **⚙️ Configuração Segura**: Armazenamento local de credenciais (nunca enviado para servidores)
+- **🗄️ Cache Inteligente**: Sistema de cache com TTL para melhor performance e suporte offline
 - **📱 Design Responsivo**: Funciona em desktop, tablet e dispositivos móveis
 - **🎨 UX Moderna**: Interface rica e bonita com componentes visuais avançados
 
@@ -70,6 +73,38 @@ Este aplicativo Dash permite que atletas monitorem seu estado de forma física a
   - **Positivo**: Pronto para treinos intensos
   - **Negativo**: Período de recuperação
   - **Zero**: Equilíbrio ideal
+
+## ❤️ Recursos Avançados de Saúde & Wellness
+
+### Saúde & Wellness Tab
+
+Monitore suas métricas de saúde em tempo real:
+
+- **HRV (Heart Rate Variability)**: Variabilidade da frequência cardíaca - indica recuperação e estado nervoso autônomo
+- **Stress Score**: Nível de stress medido pelo seu dispositivo Garmin
+- **Sleep Data**: Análise de qualidade do sono (duração, sleep profundo, REM)
+- **VO2 Max**: Capacidade aeróbica máxima estimada
+- **Body Composition**: Composição corporal (peso, IMC, massa muscular, percentual de gordura)
+- **Training Status**: Status diário de treino com recomendações de intensidade
+
+**Gráficos e visualizações**:
+- Linhas temporais com 42 dias de histórico
+- Cards com informações resumidas e status visuais
+- Indicadores de cores para fácil interpretação
+
+### Exercícios Tab
+
+Acompanhe detalhadamente seu histórico de exercícios de força:
+
+- **Progressão de Carga**: Visualize aumento de peso ao longo do tempo
+- **Séries e Repetições**: Histórico completo de séries, reps e pesos utilizados
+- **Gráfico de Progressão**: Análise visual de tendências de força
+- **Tabela Detalhada**: Últimos 10 treinos com breakdown de exercícios
+
+**Recursos**:
+- Filtra automaticamente atividades de força/strength training
+- Mostra estatísticas agregadas (total de atividades, exercícios, séries)
+- Suporte para múltiplos exercícios por treino
 
 ## 🤖 Chat com IA Especialista em Triathlon
 
@@ -196,10 +231,14 @@ Configure os seguintes parâmetros na página de configuração:
 
 ### Navegação
 
-- **📊 Dashboard**: Visão geral das métricas atuais
-- **📅 Calendário**: Histórico visual de atividades
-- **🎯 Metas**: Configuração e acompanhamento de objetivos
-- **⚙️ Configuração**: Gerenciamento de credenciais e parâmetros
+- **📊 Dashboard**: Visão geral das métricas atuais (CTL, ATL, TSB)
+- **📅 Calendário**: Histórico visual de atividades em calendário interativo
+- **🎯 Metas**: Configuração e acompanhamento de objetivos semanais/mensais
+- **❤️ Saúde & Wellness**: Métricas avançadas de saúde (HRV, Stress, Sleep, VO2 Max, Composição Corporal, Status de Treino)
+- **💪 Exercícios**: Histórico detalhado de exercícios com progressão de carga, séries e repetições
+- **🤖 AI Chat**: Assistente especializado em triathlon para análise e recomendações
+- **📋 Mais Detalhes**: Análise detalhada de atividades, recordes pessoais e conquistas
+- **⚙️ Configuração**: Gerenciamento de credenciais, parâmetros e sincronização de dados
 
 ## 🌐 Hospedagem e Deploy
 
@@ -241,11 +280,44 @@ git push heroku main
 
 **Solução**: Migre para Railway, Render ou Heroku para funcionalidade completa.
 
+## �️ Sistema de Cache Inteligente
+
+O aplicativo implementa um **sistema de cache com TTL (Time-To-Live)** para melhor performance e suporte offline:
+
+### Como Funciona
+
+- **Cache Local**: Dados são armazenados em SQLite local (`~/.fitness_metrics/cache.db`)
+- **TTL Automático**: Cada tipo de dado tem um tempo de vida configurável
+- **Cache-First**: Se os dados estão em cache e válidos, são usados imediatamente
+- **Fallback**: Se o cache expirou, novos dados são buscados do Garmin
+- **Offline**: Você pode consultar dados offline (desde que estejam em cache)
+
+### Tempos de Cache (TTL)
+
+| Tipo de Dado | TTL |
+|---|---|
+| Atividades | 1 hora |
+| Métricas de Saúde (HRV, Stress, Sleep) | 6 horas |
+| Status de Treino | 2 horas |
+| Exercícios | 4 horas |
+| VO2 Max | 24 horas |
+| Composição Corporal | 6 horas |
+| Informações de Dispositivos | 24 horas |
+
+### Limpeza de Cache
+
+O cache expirado é limpo automaticamente durante a sincronização. Você também pode limpar manualmente através da aba "⚙️ Configuração":
+
+- Invalidar tipos específicos de dados
+- Limpar todo o cache
+- Visualizar estatísticas de cache (entries, tamanho)
+
 ## 🔒 Segurança e Privacidade
 
 - **Armazenamento Local**: Todas as credenciais e dados são armazenados apenas no seu dispositivo
 - **Sem Servidores Externos**: Não há transmissão de dados para servidores externos
 - **Permissões de Arquivo**: O app tenta restringir permissões dos arquivos localmente (quando suportado pelo SO)
+- **Cache Seguro**: Cache de credenciais não é persistido entre reinicializações
 - **Controle Total**: Você pode deletar todos os dados a qualquer momento
 
 ## 📋 Dependências
@@ -269,12 +341,20 @@ python-dotenv>=1.0.0
 fitness-metrics/
 ├── app.py                 # Aplicação principal Dash
 ├── requirements.txt       # Dependências Python
+├── cache_manager.py       # Sistema de cache com SQLite + TTL
+├── garmin_enhanced.py     # Wrapper Garmin com novos endpoints
+├── wellness_page.py       # Aba "Saúde & Wellness" 
+├── exercises_page.py      # Aba "Exercícios"
 ├── details_page.py        # Aba "Mais Detalhes"
 ├── calculations.py        # Cálculos de TSS/CTL/ATL/TSB
-├── storage.py             # Persistência local (arquivos)
+├── storage.py             # Persistência local (JSON + dados saúde)
 ├── garmin.py              # Integração Garmin Connect
+├── ai_chat.py             # Assistente IA em Triathlon
 ├── utils.py               # Utilitários e funções auxiliares
-└── README.md             # Este arquivo
+├── callbacks.py           # Callbacks Dash
+├── components.py          # Componentes reutilizáveis
+├── styles.py              # Estilos customizados
+└── README.md              # Este arquivo
 ```
 
 ### Contribuição
@@ -285,7 +365,80 @@ fitness-metrics/
 4. Push para a branch (`git push origin feature/nova-feature`)
 5. Abra um Pull Request
 
-## 📞 Suporte
+## � Troubleshooting
+
+### Aba de Saúde & Wellness não mostra dados
+
+**Sintoma**: Ao clicar na aba "❤️ Saúde & Wellness", vê uma mensagem "Nenhum dado de saúde disponível"
+
+**Solução**:
+1. Vá para ⚙️ **Configuração** e confirme que adicionou suas credenciais do Garmin
+2. Clique em **🔄 Atualizar Dados** e aguarde a sincronização completar
+3. Verifique o console para mensagens de log como `[HEALTH] HRV 2025-01-10: OK`
+4. Sincronize novamente e verifique a aba depois de alguns segundos
+
+Se o problema persistir:
+- Verifique se o arquivo `~/.fitness_metrics/health_metrics.json` existe
+- Se não existir, pode ser um problema de permissões na pasta
+- Veja os detalhes em [WELLNESS_DEBUG_GUIDE.md](WELLNESS_DEBUG_GUIDE.md)
+
+### Erro ao sincronizar com Garmin
+
+**Sintoma**: Mensagem de erro durante "🔄 Atualizar Dados"
+
+**Solução**:
+1. Verifique suas credenciais do Garmin em ⚙️ **Configuração**
+2. Se usado 2FA (autenticação de dois fatores), pode ser necessário gerar uma senha específica de app
+3. Consulte os logs no console para mensagens `[FATAL]` ou `[ERROR]`
+4. Tente sincronizar novamente
+
+### Dados de treino não aparecem no Dashboard
+
+**Sintoma**: Dashboard vazio ou mostra "Sem dados disponíveis"
+
+**Solução**:
+1. Verifique se tem atividades registradas no Garmin dos últimos 42 dias
+2. Clique em 🔄 **Atualizar Dados** para sincronizar
+3. Aguarde pelo menos 5 segundos e recarregue a página
+4. Se ainda não aparecer, verifique o arquivo `~/.fitness_metrics/fitness_metrics.json`
+
+### Problemas de Performance / App Lento
+
+**Sintoma**: Dashboard demora muito para carregar ou desacelera ao navegar
+
+**Solução**:
+1. O app usa cache para melhor performance - isso é normal na primeira sincronização
+2. Se persistir, pode ter muitas atividades (>500). Considere:
+   - Arquivar atividades antigas no Garmin
+   - Limpar a cache: delete `~/.fitness_metrics/` e ressincronize
+3. Em Android/Termux, aumentar memória alocada pode ajudar
+
+### Erro de Permissão no Linux/Android
+
+**Sintoma**: `PermissionError: [Errno 13] Permission denied`
+
+**Solução**:
+```bash
+# Linux/Termux
+chmod 700 ~/.fitness_metrics
+chmod 600 ~/.fitness_metrics/*.json
+```
+
+### Cache não está funcionando corretamente
+
+**Sintoma**: Dados antigos aparecem ou cache parece não estar salvando
+
+**Solução**:
+1. O cache é armazenado em `~/.fitness_metrics/cache.db` (SQLite)
+2. Para resetar: `rm ~/.fitness_metrics/cache.db`
+3. Ressincronize e os dados frescos serão coletados
+
+## 📚 Documentação Adicional
+
+- **[WELLNESS_DEBUG_GUIDE.md](WELLNESS_DEBUG_GUIDE.md)** - Guia detalhado de diagnóstico da aba Saúde
+- **[API_FIXES_REPORT.md](API_FIXES_REPORT.md)** - Relatório técnico das correções da API Garmin
+
+## �📞 Suporte
 
 Para suporte ou dúvidas:
 
