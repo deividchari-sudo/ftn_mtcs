@@ -1675,6 +1675,24 @@ def render_dashboard():
     goals_progress = calculate_goals_progress(workouts, config)
     
     return dbc.Container([
+        # Botão discreto para atualizar dados diretamente do dashboard
+        dbc.Row([
+            dbc.Col([
+                html.Div([
+                    dbc.Button(
+                        "🔄 Atualizar dados",
+                        id="update-data-btn-dashboard",
+                        color="secondary",
+                        outline=True,
+                        size="sm",
+                        className="shadow-sm",
+                        title="Sincronizar com Garmin Connect"
+                    ),
+                    html.Div(id="update-status-dashboard", className="mt-2", style={'fontSize': '0.9rem'})
+                ], className="d-flex justify-content-end align-items-center mb-2")
+            ])
+        ]),
+
         # ============ STATUS ATUAL: ONDE VOCÊ ESTÁ ============
         dbc.Row([
             dbc.Col([
@@ -1917,7 +1935,18 @@ def render_dashboard():
                         create_metrics_history_table(metrics)
                     ])
                 ], className="shadow-sm border-0", style={'borderRadius': '12px'})
-            ])
+            ], md=12)
+        ], className="mb-4"),
+
+        dbc.Row([
+            dbc.Col([
+                dbc.Card([
+                    dbc.CardBody([
+                        html.H5("📅 Métricas das Últimas 6 Semanas", className="card-title mb-3 text-center", style={'fontWeight': '600'}),
+                        create_weekly_metrics_table(metrics)
+                    ])
+                ], className="shadow-sm border-0", style={'borderRadius': '12px'})
+            ], md=12)
         ], className="mb-4"),
 
         # Separador visual com gradiente
@@ -2694,6 +2723,87 @@ def create_metrics_history_table(metrics):
         
     except Exception as e:
         return html.Div("Erro ao carregar histórico de métricas.", className="text-danger")
+
+def create_weekly_metrics_table(metrics):
+    """Cria tabela com métricas agregadas por semana (últimas 6 semanas, começando na segunda-feira)"""
+    try:
+        if not metrics or len(metrics) < 7:
+            return html.Div("Dados insuficientes para mostrar histórico semanal.", className="text-muted")
+        
+        from datetime import datetime, timedelta
+        
+        # Agrupar métricas por semana (segunda a domingo)
+        weekly_data = []
+        
+        # Encontrar a data mais recente
+        last_date = datetime.fromisoformat(metrics[-1]['date'])
+        
+        # Encontrar a segunda-feira da semana atual
+        days_since_monday = last_date.weekday()  # 0 = segunda, 6 = domingo
+        current_monday = last_date - timedelta(days=days_since_monday)
+        
+        # Processar as últimas 6 semanas
+        for week_num in range(6):
+            week_start = current_monday - timedelta(weeks=week_num)
+            week_end = week_start + timedelta(days=6)
+            
+            # Filtrar métricas da semana
+            week_metrics = [
+                m for m in metrics
+                if week_start.date() <= datetime.fromisoformat(m['date']).date() <= week_end.date()
+            ]
+            
+            if week_metrics:
+                # Calcular médias da semana
+                avg_ctl = sum(m['ctl'] for m in week_metrics) / len(week_metrics)
+                avg_atl = sum(m['atl'] for m in week_metrics) / len(week_metrics)
+                avg_tsb = sum(m['tsb'] for m in week_metrics) / len(week_metrics)
+                total_load = sum(m.get('daily_load', 0.0) for m in week_metrics)
+                
+                weekly_data.append({
+                    'week_start': week_start,
+                    'week_end': week_end,
+                    'avg_ctl': avg_ctl,
+                    'avg_atl': avg_atl,
+                    'avg_tsb': avg_tsb,
+                    'total_load': total_load,
+                    'days_count': len(week_metrics)
+                })
+        
+        # Inverter para mostrar semana mais recente primeiro
+        weekly_data.reverse()
+        
+        # Criar linhas da tabela
+        table_rows = []
+        for week in weekly_data:
+            week_label = f"{week['week_start'].strftime('%d/%m')} - {week['week_end'].strftime('%d/%m')}"
+            
+            table_rows.append(html.Tr([
+                html.Td(week_label, style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem', 'fontWeight': '500'}),
+                html.Td(f"{week['avg_ctl']:.2f}", style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem'}),
+                html.Td(f"{week['avg_atl']:.2f}", style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem'}),
+                html.Td(f"{week['avg_tsb']:.2f}", style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem'}),
+                html.Td(f"{week['total_load']:.1f}", style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem'}),
+                html.Td(f"{week['days_count']}", style={'padding': '0.35rem 0.5rem', 'fontSize': '0.9rem', 'textAlign': 'center'})
+            ]))
+        
+        return dbc.Table([
+            html.Thead([
+                html.Tr([
+                    html.Th("Semana (Seg-Dom)", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("CTL Médio", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("ATL Médio", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("TSB Médio", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("Carga Total", style={'padding': '0.5rem', 'fontSize': '0.9rem'}),
+                    html.Th("Dias", style={'padding': '0.5rem', 'fontSize': '0.9rem', 'textAlign': 'center'})
+                ])
+            ]),
+            html.Tbody(table_rows)
+        ], striped=True, bordered=True, hover=True, responsive="sm", size="sm", className="mb-0",
+           style={'width': '100%', 'tableLayout': 'fixed', 'borderCollapse': 'collapse'})
+        
+    except Exception as e:
+        return html.Div(f"Erro ao carregar histórico semanal: {str(e)}", className="text-danger")
 
 def calculate_modality_progress(activities):
     """Calcula progresso por modalidade agrupado por semana (42 dias)"""
@@ -4805,6 +4915,31 @@ def save_config_callback(n_clicks, age, ftp, hr_max, hr_rest, hr_threshold, pace
         except Exception as e:
             return html.Div(f"❌ Erro ao salvar configurações: {str(e)}", className="alert alert-danger mt-3")
     return html.Div()
+
+@app.callback(
+    Output("update-status-dashboard", "children"),
+    Input("update-data-btn-dashboard", "n_clicks"),
+    prevent_initial_call=True
+)
+def handle_dashboard_update(update_clicks):
+    """Atualiza dados a partir do botão discreto no dashboard"""
+    if not update_clicks:
+        return dash.no_update
+    try:
+        credentials = load_credentials()
+        config = load_config()
+
+        success, message = fetch_garmin_data(
+            email=credentials.get('email'),
+            password=credentials.get('password'),
+            config=config,
+            use_tokens=True
+        )
+
+        alert_class = "alert alert-success mt-2" if success else "alert alert-danger mt-2"
+        return html.Div(message, className=alert_class)
+    except Exception as e:
+        return html.Div(f"❌ Erro inesperado: {str(e)}", className="alert alert-danger mt-2")
 
 @app.callback(
     Output("update-status", "children"),
