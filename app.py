@@ -163,6 +163,8 @@ app.index_string = '''
 app.layout = html.Div(id='app-container', children=[
     # Store para modo escuro
     dcc.Store(id='dark-mode-store', data=False),
+    # Store para sinalizar refresh de conteúdo após sync
+    dcc.Store(id='refresh-signal'),
     
     # Location para forçar reload
     dcc.Location(id='url', refresh=False),
@@ -262,9 +264,10 @@ app.layout = html.Div(id='app-container', children=[
 # Callback para trocar conteúdo das abas
 @app.callback(
     Output("tab-content", "children"),
-    Input("tabs", "active_tab")
+    Input("tabs", "active_tab"),
+    Input("refresh-signal", "data")
 )
-def render_tab_content(active_tab):
+def render_tab_content(active_tab, _refresh_signal):
     if active_tab == "dashboard":
         return render_dashboard()
     elif active_tab == "calendar":
@@ -2397,7 +2400,7 @@ def create_weekly_chart():
             barmode='stack',
             title=f'Treinos da Semana ({week_start_str} - {week_end_str})',
             xaxis_title='Dia da Semana',
-            yaxis_title='Horas de Treino',
+            yaxis_title='Horas de Treino (hh:mm)',
             height=400,
             autosize=True,  # Habilitar autosize para usar toda largura
             plot_bgcolor='rgba(248,249,250,0.5)',
@@ -2500,6 +2503,10 @@ def create_distribution_chart():
             '⚽ Outros': '#6c757d'
         }
         
+        # Formatar horas em hh:mm para rótulos e tooltip
+        horas_fmt = [format_hours_decimal(h) for h in horas]
+        customdata = [[hfmt, a] for hfmt, a in zip(horas_fmt, atividades)]
+
         fig.add_trace(go.Bar(
             x=horas,
             y=tipos,
@@ -2508,26 +2515,27 @@ def create_distribution_chart():
                 color=[cores.get(t, '#6c757d') for t in tipos],
                 line=dict(width=0)
             ),
-            text=[f'{h:.1f}h<br>{a} atividades' for h, a in zip(horas, atividades)],
+            text=[f'{hfmt}<br>{a} atividades' for hfmt, a in zip(horas_fmt, atividades)],
             textposition='outside',
-            hovertemplate='<b>%{y}</b><br>Horas: %{x:.1f}h<br>Atividades: %{customdata}<extra></extra>',
-            customdata=atividades
+            hovertemplate='<b>%{y}</b><br>Horas: %{customdata[0]}<br>Atividades: %{customdata[1]}<extra></extra>',
+            customdata=customdata
         ))
         
         # Calcular total
         total_horas = sum(horas)
+        total_horas_str = format_hours_decimal(total_horas)
         total_atividades = sum(atividades)
         
         fig.update_layout(
             title={
-                'text': f'Distribuição dos Tipos de Treino<br><span style="font-size:14px;color:#6c757d;">Total: {total_horas:.1f}h | {total_atividades} atividades</span>',
+                'text': f'Distribuição dos Tipos de Treino<br><span style="font-size:14px;color:#6c757d;">Total: {total_horas_str} | {total_atividades} atividades</span>',
                 'y': 0.95,
                 'x': 0.5,
                 'xanchor': 'center',
                 'yanchor': 'top',
                 'font': {'size': 16, 'color': '#212529'}
             },
-            xaxis_title='Horas de Treino',
+            xaxis_title='Horas de Treino (hh:mm)',
             font={'family': 'Inter, -apple-system, sans-serif', 'size': 12},
             plot_bgcolor='rgba(248,249,250,0.5)',
             paper_bgcolor='white',
@@ -4569,7 +4577,7 @@ def create_modality_subplot_chart(data, modality_info, modality_key):
     fig.update_yaxes(title_text='TSS', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=1, col=2)
     
     fig.update_xaxes(showgrid=False, row=2, col=1)
-    fig.update_yaxes(title_text='Horas', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=2, col=1)
+    fig.update_yaxes(title_text='Horas (hh:mm)', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=2, col=1)
     
     fig.update_xaxes(showgrid=False, row=2, col=2)
     fig.update_yaxes(title_text='Atividades', showgrid=True, gridcolor='rgba(0,0,0,0.1)', row=2, col=2)
@@ -4700,9 +4708,10 @@ def toggle_dark_mode(n_clicks, current_mode):
 # Callback para atualizar badge de última atualização
 @app.callback(
     Output('last-update-badge', 'children'),
-    Input('tabs', 'active_tab')
+    Input('tabs', 'active_tab'),
+    Input('refresh-signal', 'data')
 )
-def update_last_sync_badge(active_tab):
+def update_last_sync_badge(active_tab, _refresh_signal):
     """Atualiza o badge mostrando quando foi a última sincronização"""
     try:
         state = load_sync_state()
@@ -4918,13 +4927,14 @@ def save_config_callback(n_clicks, age, ftp, hr_max, hr_rest, hr_threshold, pace
 
 @app.callback(
     Output("update-status-dashboard", "children"),
+    Output("refresh-signal", "data"),
     Input("update-data-btn-dashboard", "n_clicks"),
     prevent_initial_call=True
 )
 def handle_dashboard_update(update_clicks):
     """Atualiza dados a partir do botão discreto no dashboard"""
     if not update_clicks:
-        return dash.no_update
+        return dash.no_update, dash.no_update
     try:
         credentials = load_credentials()
         config = load_config()
@@ -4937,9 +4947,10 @@ def handle_dashboard_update(update_clicks):
         )
 
         alert_class = "alert alert-success mt-2" if success else "alert alert-danger mt-2"
-        return html.Div(message, className=alert_class)
+        refresh_value = datetime.now().isoformat(timespec='seconds') if success else dash.no_update
+        return html.Div(message, className=alert_class), refresh_value
     except Exception as e:
-        return html.Div(f"❌ Erro inesperado: {str(e)}", className="alert alert-danger mt-2")
+        return html.Div(f"❌ Erro inesperado: {str(e)}", className="alert alert-danger mt-2"), dash.no_update
 
 @app.callback(
     Output("update-status", "children"),
