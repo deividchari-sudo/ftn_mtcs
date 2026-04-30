@@ -176,3 +176,20 @@ def clamp_percentage(value: float, target: float) -> int:
         return int(max(0, min(100, pct)))
     except Exception:
         return 0
+
+
+def format_hours_decimal(seconds: float) -> str:
+    """
+    Formata segundos em formato decimal de horas (ex: 1.5 = 1h30min).
+    
+    Args:
+        seconds: Duração em segundos
+        
+    Returns:
+        String formatada como horas decimais
+    """
+    if not seconds or seconds <= 0:
+        return "0.0"
+    
+    hours = seconds / 3600
+    return f"{hours:.1f}h"

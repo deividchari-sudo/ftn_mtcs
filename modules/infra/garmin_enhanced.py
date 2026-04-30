@@ -6,7 +6,7 @@ Expõe métodos de saúde, training status, e exercícios com fallback gracioso.
 from garminconnect import Garmin
 from datetime import datetime, timedelta, date
 from typing import Optional, Dict, List, Any
-from cache_manager import get_or_fetch, invalidate_type
+from .cache_manager import get_or_fetch, invalidate_type
 
 import logging
 
