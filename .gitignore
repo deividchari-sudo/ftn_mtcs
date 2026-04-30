@@ -2,15 +2,28 @@
 __pycache__/
 *.py[cod]
 *.log
-frontend/node_modules/
-frontend/dist/
-*$py.class
-
-# C extensions
-*.so
 
 # ============================================================================
-# 🔒 SEGURANÇA - Não commitir arquivos sensíveis!
+# � NODE.JS / FRONTEND - Dependências e builds
+# ============================================================================
+
+# Node modules (nunca commitar!)
+node_modules/
+**/node_modules/
+frontend/node_modules/
+
+# Build outputs
+frontend/dist/
+frontend/build/
+dist/
+build/
+
+# Vite cache
+frontend/.vite/
+.vite/
+
+# ============================================================================
+# �🔒 SEGURANÇA - Não commitir arquivos sensíveis!
 # ============================================================================
 
 # Tokens e credenciais Garmin
