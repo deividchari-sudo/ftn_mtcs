@@ -1136,7 +1136,60 @@ pip install -r requirements.txt --upgrade
 
 ---
 
-## 📞 Suporte e Contato
+## � Como Executar
+
+### Opção 1: Script Automático (Recomendado)
+```powershell
+# No PowerShell
+.\start-dev.ps1
+
+# Ou apenas backend
+.\start-dev.ps1 -SkipFrontend
+
+# Ou apenas frontend
+.\start-dev.ps1 -SkipBackend
+```
+
+### Opção 2: Manual - Backend (Python)
+```bash
+# Instalar dependências Python
+pip install -r requirements.txt
+
+# Executar aplicação
+python app.py
+```
+- Acesse: http://localhost:8050
+
+### Opção 3: Manual - Frontend (React + Vite)
+```bash
+# Navegar para pasta do frontend
+cd frontend
+
+# Instalar dependências (apenas primeira vez)
+npm install
+
+# Executar em modo desenvolvimento
+npm run dev
+```
+- Acesse: http://localhost:3000
+
+### Executar Ambos (Desenvolvimento Full Stack)
+Terminal 1 - Backend:
+```bash
+python app.py
+```
+
+Terminal 2 - Frontend:
+```bash
+cd frontend
+npm run dev
+```
+
+Acesse o frontend em http://localhost:3000 (ele proxy para o backend em :8050)
+
+---
+
+## �📞 Suporte e Contato
 
 ### **Precisa de Ajuda?**
 
