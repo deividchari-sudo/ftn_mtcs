@@ -1,0 +1,72 @@
+{
+  "description": "Valores de referência conhecidos para TSS (Training Stress Score)",
+  "source": "TrainingPeaks methodology - Coggan & Allen",
+  "formula": "TSS = (duration_hours) × IF² × 100",
+  "note": "1 hour at FTP = 100 TSS by definition",
+  "test_cases": [
+    {
+      "name": "1 hour exactly at FTP",
+      "duration_sec": 3600,
+      "power": 250,
+      "ftp": 250,
+      "expected_tss": 100.0,
+      "description": "Classic definition: 1h at FTP = 100 TSS"
+    },
+    {
+      "name": "2 hours at FTP",
+      "duration_sec": 7200,
+      "power": 250,
+      "ftp": 250,
+      "expected_tss": 200.0,
+      "description": "Linear with duration"
+    },
+    {
+      "name": "30 min at FTP",
+      "duration_sec": 1800,
+      "power": 250,
+      "ftp": 250,
+      "expected_tss": 50.0,
+      "description": "Half duration = half TSS"
+    },
+    {
+      "name": "1 hour at 80% FTP",
+      "duration_sec": 3600,
+      "power": 200,
+      "ftp": 250,
+      "expected_tss": 64.0,
+      "description": "IF=0.8, TSS=0.8²×100=64"
+    },
+    {
+      "name": "1 hour at 90% FTP",
+      "duration_sec": 3600,
+      "power": 225,
+      "ftp": 250,
+      "expected_tss": 81.0,
+      "description": "IF=0.9, TSS=0.9²×100=81"
+    },
+    {
+      "name": "1 hour at 110% FTP",
+      "duration_sec": 3600,
+      "power": 275,
+      "ftp": 250,
+      "expected_tss": 121.0,
+      "description": "IF=1.1, TSS=1.1²×100=121"
+    },
+    {
+      "name": "2 hours at 75% FTP",
+      "duration_sec": 7200,
+      "power": 187.5,
+      "ftp": 250,
+      "expected_tss": 112.5,
+      "description": "IF=0.75, TSS=2×0.75²×100=112.5"
+    },
+    {
+      "name": "30 min at 105% FTP",
+      "duration_sec": 1800,
+      "power": 262.5,
+      "ftp": 250,
+      "expected_tss": 55.125,
+      "description": "IF=1.05, TSS=0.5×1.05²×100=55.125"
+    }
+  ]
+}
